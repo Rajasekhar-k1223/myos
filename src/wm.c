@@ -26,6 +26,7 @@ static desktop_icon_t icons[MAX_ICONS];
 static int num_icons = 0;
 
 static uint32_t* desktop_bg_buffer = 0;
+static window_t* focused_window = 0;
 
 static int drag_win_idx = -1;
 static int drag_off_x = 0;
@@ -45,7 +46,8 @@ theme_t theme_win95 = {
     .taskbar_bg = 0xC0C0C0,
     .start_btn_bg = 0x008000,
     .start_btn_fg = 0xFFFFFF,
-    .menu_fg = 0x000000
+    .menu_fg = 0x000000,
+    .title_inactive_bg = 0x808080
 };
 
 theme_t theme_ubuntu = {
@@ -56,7 +58,8 @@ theme_t theme_ubuntu = {
     .taskbar_bg = 0x222222,
     .start_btn_bg = 0xE95420,
     .start_btn_fg = 0xFFFFFF,
-    .menu_fg = 0xFFFFFF
+    .menu_fg = 0xFFFFFF,
+    .title_inactive_bg = 0x505050
 };
 
 theme_t current_theme;
@@ -139,6 +142,8 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
     win->cursor_y = 0;
     win->fg_color = 0xAAAAAA; // Default Light Gray Text
     win->bg_color = 0x000000; // Default Black Background
+    
+    focused_window = win;
     
     win->buffer = (uint32_t*)kmalloc(w * h * 4);
     
@@ -249,7 +254,7 @@ static void wm_render(void) {
         // Window Border (2px)
         vesa_draw_rect(w->x - 2, w->y - 2, w->w + 4, w->h + 24, current_theme.window_border);
         // Window Title bar (20px high)
-        vesa_draw_rect(w->x, w->y, w->w, 20, current_theme.title_bg);
+        vesa_draw_rect(w->x, w->y, w->w, 20, (w == focused_window) ? current_theme.title_bg : current_theme.title_inactive_bg);
         wm_draw_string(w->x + 5, w->y + 6, w->title, current_theme.title_fg);
         
         // Close Button (Red 'X')
@@ -262,6 +267,14 @@ static void wm_render(void) {
         for (uint32_t yy = 0; yy < w->h; yy++) {
             for (uint32_t xx = 0; xx < w->w; xx++) {
                 vesa_putpixel(w->x + xx, w->y + 20 + yy, w->buffer[yy * w->w + xx]);
+            }
+        }
+        
+        // Blinking Cursor
+        if (w == focused_window && (strncmp(w->title, "Notepad", 7) == 0 || strncmp(w->title, "Terminal", 8) == 0)) {
+            uint32_t ticks = pit_get_ticks();
+            if ((ticks / 50) % 2 == 0) {
+                vesa_draw_rect(w->x + w->cursor_x, w->y + 20 + w->cursor_y, 8, 8, w->fg_color);
             }
         }
     }
@@ -437,9 +450,26 @@ void wm_process_events(void) {
             for (int i = num_windows - 1; i >= 0; i--) {
                 window_t* w = &windows[i];
                 if (w->active) {
-                    // Check if click is inside the Close Button (X)
-                    if (mx >= (int)(w->x + w->w - 18) && mx <= (int)(w->x + w->w - 2) &&
-                        my >= (int)(w->y + 2) && my <= (int)(w->y + 18)) {
+                    // Check if click is inside window bounds
+                    if (mx >= (int)(w->x - 2) && mx <= (int)(w->x + w->w + 2) &&
+                        my >= (int)(w->y - 2) && my <= (int)(w->y + w->h + 20)) {
+                        
+                        focused_window = w;
+                        
+                        // Bring window to top by shifting it to end of array
+                        if (i != num_windows - 1) {
+                            window_t temp = *w;
+                            for (int j = i; j < num_windows - 1; j++) {
+                                windows[j] = windows[j + 1];
+                            }
+                            windows[num_windows - 1] = temp;
+                            w = &windows[num_windows - 1];
+                            i = num_windows - 1; // update i so drag_win_idx gets right value
+                        }
+                        
+                        // Check if click is inside the Close Button (X)
+                        if (mx >= (int)(w->x + w->w - 18) && mx <= (int)(w->x + w->w - 2) &&
+                            my >= (int)(w->y + 2) && my <= (int)(w->y + 18)) {
                         w->active = 0; // Close the window
                         extern window_t* shell_window;
                         if (shell_window == w) {
@@ -492,6 +522,12 @@ void wm_process_events(void) {
                         }
                         clicked_on_something = 1;
                         break;
+                    }
+                    
+                    // Clicked inside the window body (not title/close/explorer)
+                    clicked_on_something = 1;
+                    redraw_needed = 1;
+                    break;
                     }
                 }
             }
@@ -560,8 +596,21 @@ void wm_process_events(void) {
     
     last_btns = btns;
 
+    // Force redraw for blinking cursor if focused window is text-based
+    if (focused_window && (strncmp(focused_window->title, "Notepad", 7) == 0 || strncmp(focused_window->title, "Terminal", 8) == 0)) {
+        if (pit_get_ticks() % 50 == 0) redraw_needed = 1;
+    }
+
     if (redraw_needed) {
         wm_render();
         redraw_needed = 0;
     }
+}
+
+int wm_handle_keypress(char c) {
+    if (focused_window && (strncmp(focused_window->title, "Notepad", 7) == 0 || strncmp(focused_window->title, "Terminal", 8) == 0)) {
+        wm_putchar(focused_window, c);
+        return 1;
+    }
+    return 0;
 }

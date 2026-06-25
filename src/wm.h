@@ -20,9 +20,12 @@ typedef struct {
     uint32_t start_btn_bg;
     uint32_t start_btn_fg;
     uint32_t menu_fg;
+    uint32_t title_inactive_bg;
 } theme_t;
 
 extern theme_t current_theme;
+
+int wm_handle_keypress(char c);
 
 void wm_init(void);
 void wm_request_redraw(void);
