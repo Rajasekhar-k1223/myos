@@ -25,7 +25,7 @@ myos.iso: myos.bin
 	grub-mkrescue -o myos.iso isodir
 
 run: myos.iso
-	qemu-system-i386 -cdrom myos.iso
+	qemu-system-i386 -cdrom myos.iso -boot d
 
 clean:
 	rm -f src/*.o myos.bin myos.iso
