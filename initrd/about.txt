@@ -1,0 +1,25 @@
+About myOS
+==========
+
+myOS is a 32-bit hobby operating system built entirely from scratch
+using C (GNU99) and x86 assembly. It runs in protected mode and boots
+via GRUB/Multiboot.
+
+Subsystems implemented:
+  - Multiboot-compliant boot sequence (boot.S)
+  - GDT: flat 32-bit kernel code + data segments
+  - IDT: 256 interrupt vectors + PIC remapping (IRQs 0x20-0x2F)
+  - PIT: 8253/8254 programmable interval timer at 100 Hz
+  - PS/2 keyboard driver with shift support
+  - RTC: CMOS real-time clock (date and time)
+  - PMM: physical memory manager (bitmap, 4 KB frames)
+  - Paging: identity-mapped first 16 MB, CR3/CR0 controlled
+  - kheap: 1 MB kernel heap (first-fit allocator)
+  - TAR parser: reads POSIX ustar archives from multiboot module
+  - Interactive shell with 14 built-in commands
+  - sprintf/snprintf/vsnprintf formatting engine
+  - Extended string library (memcpy, memmove, strcat, strtol, ...)
+
+Tools used: gcc-multilib, grub-pc-bin, xorriso, qemu-system-i386, gdb
+
+Source: /opt/apps/myos/src/

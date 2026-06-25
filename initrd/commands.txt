@@ -1,0 +1,20 @@
+myOS Shell — Command Reference
+================================
+
+help           Show all available commands
+clear          Clear the screen
+info           System info (CPU, RAM, uptime, date)
+mem            Physical memory usage with visual bar
+uptime         Time since boot (h/m/s + ticks)
+date           Current date and time from RTC hardware
+
+ls             List files on the RAM disk
+cat <file>     Print a file  (e.g.  cat readme.txt)
+
+echo <text>    Print text to the screen
+calc <expr>    Evaluate arithmetic  (e.g.  calc 2+3*4)
+hexdump <addr> Hex dump of memory   (e.g.  hexdump 0x100000 128)
+color <fg> <bg> Change terminal colors (0-15 each)
+
+reboot         Restart the machine via PS/2 controller
+halt           Halt the CPU (power off)
