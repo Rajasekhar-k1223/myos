@@ -15,6 +15,15 @@ static window_t windows[MAX_WINDOWS];
 static int num_windows = 0;
 static int redraw_needed = 1;
 
+typedef struct {
+    char name[64];
+    int x, y, w, h;
+} desktop_icon_t;
+
+#define MAX_ICONS 32
+static desktop_icon_t icons[MAX_ICONS];
+static int num_icons = 0;
+
 static uint32_t* desktop_bg_buffer = 0;
 
 static int drag_win_idx = -1;
@@ -60,6 +69,28 @@ void wm_init(void) {
     for (int y = 0; y < (int)vesa_height; y += 150) {
         for (int x = 0; x < (int)vesa_width; x += 250) {
             bmp_load_to_buffer("logo.bmp", desktop_bg_buffer, vesa_width, vesa_height, x, y);
+        }
+    }
+    
+    // Cache desktop icons
+    char name[100];
+    int icon_x = 20;
+    int icon_y = 20;
+    for (int i = 0; tar_get_file_at_index(i, name); i++) {
+        if (num_icons < MAX_ICONS) {
+            strncpy(icons[num_icons].name, name, 63);
+            icons[num_icons].name[63] = '\0';
+            icons[num_icons].x = icon_x;
+            icons[num_icons].y = icon_y;
+            icons[num_icons].w = 32;
+            icons[num_icons].h = 32;
+            num_icons++;
+            
+            icon_y += 80;
+            if (icon_y > (int)vesa_height - 120) {
+                icon_y = 20;
+                icon_x += 100;
+            }
         }
     }
 }
@@ -167,6 +198,20 @@ static void wm_render(void) {
         vesa_draw_desktop_bg(desktop_bg_buffer);
     } else {
         vesa_clear(0x008080);
+    }
+    
+    // 1.5 Draw Desktop Icons
+    for (int i = 0; i < num_icons; i++) {
+        // Icon graphic (White square with inner shadow)
+        vesa_draw_rect(icons[i].x, icons[i].y, icons[i].w, icons[i].h, 0xFFFFFF);
+        vesa_draw_rect(icons[i].x, icons[i].y, icons[i].w, 2, 0xC0C0C0);
+        vesa_draw_rect(icons[i].x, icons[i].y, 2, icons[i].h, 0xC0C0C0);
+        
+        // Text label with dark background
+        int text_len = strlen(icons[i].name);
+        int text_x = icons[i].x + (icons[i].w / 2) - ((text_len * 8) / 2);
+        vesa_draw_rect(text_x - 2, icons[i].y + icons[i].h + 5, text_len * 8 + 4, 10, 0x000000);
+        wm_draw_string(text_x, icons[i].y + icons[i].h + 6, icons[i].name, 0xFFFFFF);
     }
     
     // 2. Draw Windows
@@ -400,6 +445,45 @@ void wm_process_events(void) {
         if (!clicked_on_something && start_menu_open) {
             start_menu_open = 0;
             redraw_needed = 1;
+        }
+        
+        // Check Desktop Icons
+        if (!clicked_on_something && !start_menu_open) {
+            for (int i = 0; i < num_icons; i++) {
+                int text_len = strlen(icons[i].name);
+                int text_x = icons[i].x + (icons[i].w / 2) - ((text_len * 8) / 2);
+                
+                // Bounding box includes icon and text
+                if (mx >= text_x - 5 && mx <= text_x + (text_len * 8) + 5 &&
+                    my >= icons[i].y && my <= icons[i].y + icons[i].h + 20) {
+                    
+                    char* name = icons[i].name;
+                    int len = strlen(name);
+                    if (len >= 4 && strcmp(&name[len-4], ".bmp") == 0) {
+                        char title[100];
+                        strcpy(title, "Image Viewer - ");
+                        strncat(title, name, 63);
+                        window_t* img_win = wm_create_window(250, 150, 500, 400, title);
+                        extern void bmp_load_to_window(const char*, window_t*);
+                        bmp_load_to_window(name, img_win);
+                    } else if (len >= 4 && strcmp(&name[len-4], ".txt") == 0) {
+                        char title[100];
+                        strcpy(title, "Notepad - ");
+                        strncat(title, name, 63);
+                        window_t* txt_win = wm_create_window(200, 200, 400, 300, title);
+                        size_t file_size;
+                        char* data = (char*)tar_get_file(name, &file_size);
+                        if (data) {
+                            for(size_t j=0; j<file_size; j++) {
+                                wm_putchar(txt_win, data[j]);
+                            }
+                        }
+                    }
+                    clicked_on_something = 1;
+                    redraw_needed = 1;
+                    break;
+                }
+            }
         }
         
     } else if (left_click_just_released) {
