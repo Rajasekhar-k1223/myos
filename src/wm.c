@@ -232,41 +232,44 @@ static void wm_render(void) {
         vesa_clear(0x008080);
     }
     
-    // 1.5 Draw Desktop Icons
-    for (int i = 0; i < num_icons; i++) {
-        // Icon graphic (White square with inner shadow)
-        vesa_draw_rect(icons[i].x, icons[i].y, icons[i].w, icons[i].h, 0xFFFFFF);
-        vesa_draw_rect(icons[i].x, icons[i].y, icons[i].w, 2, 0xC0C0C0);
-        vesa_draw_rect(icons[i].x, icons[i].y, 2, icons[i].h, 0xC0C0C0);
-        
-        // Text label with dark background
-        int text_len = strlen(icons[i].name);
-        int text_x = icons[i].x + (icons[i].w / 2) - ((text_len * 8) / 2);
-        vesa_draw_rect(text_x - 2, icons[i].y + icons[i].h + 5, text_len * 8 + 4, 10, 0x000000);
-        wm_draw_string(text_x, icons[i].y + icons[i].h + 6, icons[i].name, 0xFFFFFF);
-    }
+    // 1.5 Draw Desktop Icons (Removed for Modern Dock)
     
     // 2. Draw Windows
     for (int i = 0; i < num_windows; i++) {
         window_t* w = &windows[i];
         if (!w->active) continue;
         
-        // Window Border (2px)
-        vesa_draw_rect(w->x - 2, w->y - 2, w->w + 4, w->h + 24, current_theme.window_border);
+        // Window Border (1px flat)
+        vesa_draw_rect(w->x - 1, w->y - 1, w->w + 2, w->h + 22, current_theme.window_border);
         // Window Title bar (20px high)
         vesa_draw_rect(w->x, w->y, w->w, 20, (w == focused_window) ? current_theme.title_bg : current_theme.title_inactive_bg);
         wm_draw_string(w->x + 5, w->y + 6, w->title, current_theme.title_fg);
         
-        // Close Button (Red 'X')
+        // Close Button (Modern Flat)
         vesa_draw_rect(w->x + w->w - 18, w->y + 2, 16, 16, 0xC00000);
-        vesa_draw_rect(w->x + w->w - 18, w->y + 2, 16, 1, 0xFF8080); // top highlight
-        vesa_draw_rect(w->x + w->w - 18, w->y + 2, 1, 16, 0xFF8080); // left highlight
         wm_draw_string(w->x + w->w - 14, w->y + 6, "x", 0xFFFFFF);
         
-        // Draw the inner buffer
-        for (uint32_t yy = 0; yy < w->h; yy++) {
-            for (uint32_t xx = 0; xx < w->w; xx++) {
-                vesa_putpixel(w->x + xx, w->y + 20 + yy, w->buffer[yy * w->w + xx]);
+        // Draw the inner buffer with Alpha Transparency for Terminal
+        if (strncmp(w->title, "Terminal", 8) == 0) {
+            for (uint32_t yy = 0; yy < w->h; yy++) {
+                for (uint32_t xx = 0; xx < w->w; xx++) {
+                    uint32_t px = w->buffer[yy * w->w + xx];
+                    if (px == w->bg_color && desktop_bg_buffer) {
+                        uint32_t bg = desktop_bg_buffer[(w->y + 20 + yy) * vesa_width + (w->x + xx)];
+                        uint32_t r = (((bg >> 16) & 0xFF) + ((px >> 16) & 0xFF)) >> 1;
+                        uint32_t g = (((bg >> 8) & 0xFF) + ((px >> 8) & 0xFF)) >> 1;
+                        uint32_t b = (((bg >> 0) & 0xFF) + ((px >> 0) & 0xFF)) >> 1;
+                        vesa_putpixel(w->x + xx, w->y + 20 + yy, (r << 16) | (g << 8) | b);
+                    } else {
+                        vesa_putpixel(w->x + xx, w->y + 20 + yy, px);
+                    }
+                }
+            }
+        } else {
+            for (uint32_t yy = 0; yy < w->h; yy++) {
+                for (uint32_t xx = 0; xx < w->w; xx++) {
+                    vesa_putpixel(w->x + xx, w->y + 20 + yy, w->buffer[yy * w->w + xx]);
+                }
             }
         }
         
@@ -279,35 +282,50 @@ static void wm_render(void) {
         }
     }
     
-    // 3. Draw Taskbar
-    vesa_draw_rect(0, vesa_height - 30, vesa_width, 30, current_theme.taskbar_bg);
-    vesa_draw_rect(0, vesa_height - 30, vesa_width, 2, 0xFFFFFF); // 3D highlight top edge
+    // 3. Draw Top Bar (Modern Linux Style)
+    vesa_draw_rect(0, 0, vesa_width, 24, current_theme.taskbar_bg);
     
-    // Start Button
-    vesa_draw_rect(5, vesa_height - 25, 60, 20, current_theme.start_btn_bg); // Background
+    // Activities Button
     if (start_btn_pressed) {
-        vesa_draw_rect(5, vesa_height - 25, 60, 2, 0x000000); // Pressed shadow
-        vesa_draw_rect(5, vesa_height - 25, 2, 20, 0x000000); 
-    } else {
-        vesa_draw_rect(5, vesa_height - 25, 60, 2, 0xFFFFFF); // Highlight
-        vesa_draw_rect(5, vesa_height - 25, 2, 20, 0xFFFFFF); 
+        vesa_draw_rect(0, 0, 80, 24, 0x000000); // Pressed shadow
     }
-    wm_draw_string(15, vesa_height - 19, "START", current_theme.start_btn_fg);
+    wm_draw_string(8, 8, "Activities", current_theme.title_fg);
     
-    // Clock Box (Inset 3D)
-    vesa_draw_rect(vesa_width - 160, vesa_height - 25, 150, 20, 0xA0A0A0);
-    vesa_draw_rect(vesa_width - 160, vesa_height - 25, 150, 2, 0x808080); // inner shadow top
-    vesa_draw_rect(vesa_width - 160, vesa_height - 25, 2, 20, 0x808080); // inner shadow left
-    vesa_draw_rect(vesa_width - 160, vesa_height - 7, 150, 2, 0xFFFFFF); // inner highlight bottom
-    vesa_draw_rect(vesa_width - 12, vesa_height - 25, 2, 20, 0xFFFFFF); // inner highlight right
-    wm_draw_string(vesa_width - 150, vesa_height - 19, clock_str, 0x000000);
+    // Centered Clock
+    wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
+    
+    // Bottom Dock (Modern floating launcher)
+    int dock_w = 320;
+    int dock_h = 50;
+    int dock_x = (vesa_width - dock_w) / 2;
+    int dock_y = vesa_height - dock_h - 10;
+    
+    // Draw rounded dock base
+    vesa_draw_rect(dock_x, dock_y, dock_w, dock_h, current_theme.taskbar_bg);
+    
+    // Dock Icons
+    // Terminal
+    vesa_draw_rect(dock_x + 10, dock_y + 5, 40, 40, 0x111111);
+    wm_draw_string(dock_x + 20, dock_y + 20, ">_", 0x00FF00);
+    // Files
+    vesa_draw_rect(dock_x + 70, dock_y + 5, 40, 40, 0x0000AA);
+    wm_draw_string(dock_x + 75, dock_y + 20, "Dir", 0xFFFFFF);
+    // Snake
+    vesa_draw_rect(dock_x + 130, dock_y + 5, 40, 40, 0x00AA00);
+    wm_draw_string(dock_x + 135, dock_y + 20, "Snk", 0xFFFFFF);
+    // Reverser
+    vesa_draw_rect(dock_x + 190, dock_y + 5, 40, 40, 0xAA5500);
+    wm_draw_string(dock_x + 195, dock_y + 20, "Rev", 0xFFFFFF);
+    // Theme
+    vesa_draw_rect(dock_x + 250, dock_y + 5, 40, 40, 0xAA00AA);
+    wm_draw_string(dock_x + 255, dock_y + 20, "Thm", 0xFFFFFF);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
         uint32_t m_w = 150;
         uint32_t m_h = 240;
         uint32_t m_x = 0;
-        uint32_t m_y = vesa_height - 30 - m_h;
+        uint32_t m_y = 24; // Dropdown from top bar
         
         // Menu Background
         vesa_draw_rect(m_x, m_y, m_w, m_h, current_theme.window_bg);
@@ -373,16 +391,16 @@ void wm_process_events(void) {
     if (left_click_just_pressed) {
         int clicked_on_something = 0;
         
-        // Check Start Button click
-        if (mx >= 5 && mx <= 65 && my >= (int)(vesa_height - 25) && my <= (int)(vesa_height - 5)) {
+        // Check Top Bar "Activities" click
+        if (mx >= 0 && mx <= 80 && my >= 0 && my <= 24) {
             start_btn_pressed = 1;
             clicked_on_something = 1;
             redraw_needed = 1;
         } 
-        // Check Start Menu items click
-        else if (start_menu_open && mx >= 0 && mx <= 150 && my >= (int)(vesa_height - 30 - 240) && my <= (int)(vesa_height - 30)) {
+        // Check Activities Menu items click
+        else if (start_menu_open && mx >= 0 && mx <= 150 && my >= 24 && my <= 24 + 240) {
             clicked_on_something = 1;
-            uint32_t m_y = vesa_height - 30 - 240;
+            uint32_t m_y = 24;
             
             if (my >= (int)(m_y + 15) && my <= (int)(m_y + 35)) {
                 // New Terminal
@@ -402,46 +420,57 @@ void wm_process_events(void) {
                 bmp_load_to_window("logo.bmp", img_win);
                 start_menu_open = 0;
                 redraw_needed = 1;
-            } else if (my >= (int)(m_y + 90) && my <= (int)(m_y + 110)) {
-                // File Explorer
-                window_t* fe_win = wm_create_window(100, 100, 400, 300, "File Explorer");
-                char name[100];
-                for (int i = 0; tar_get_file_at_index(i, name); i++) {
-                    for(int j = 0; name[j]; j++) wm_putchar(fe_win, name[j]);
-                    wm_putchar(fe_win, '\n');
-                }
-                start_menu_open = 0;
-                redraw_needed = 1;
-            } else if (my >= (int)(m_y + 115) && my <= (int)(m_y + 135)) {
-                // Snake
-                window_t* snake_win = wm_create_window(200, 150, 400, 400, "Snake");
-                snake_init(snake_win);
-                start_menu_open = 0;
-                redraw_needed = 1;
-            } else if (my >= (int)(m_y + 140) && my <= (int)(m_y + 160)) {
-                // Text Reverser
-                window_t* txt_win = wm_create_window(150, 150, 400, 300, "Text Reverser");
-                size_t file_size;
-                char* data = (char*)tar_get_file("readme.txt", &file_size);
-                if (data) {
-                    for(int j = (int)file_size - 1; j >= 0; j--) {
-                        wm_putchar(txt_win, data[j]);
-                    }
-                }
-                start_menu_open = 0;
-                redraw_needed = 1;
-            } else if (my >= (int)(m_y + 165) && my <= (int)(m_y + 185)) {
-                // Switch Theme
-                static int theme_idx = 0;
-                theme_idx = !theme_idx;
-                extern theme_t theme_win95, theme_ubuntu;
-                current_theme = theme_idx ? theme_ubuntu : theme_win95;
-                start_menu_open = 0;
-                redraw_needed = 1;
             } else if (my >= (int)(m_y + 205) && my <= (int)(m_y + 225)) {
                 // Reboot
                 outb(0x64, 0xFE);
                 for (;;) __asm__ volatile("hlt");
+            }
+        }
+        
+        // Check Dock Clicks
+        if (!clicked_on_something && !start_menu_open) {
+            int dock_w = 320;
+            int dock_h = 50;
+            int dock_x = (vesa_width - dock_w) / 2;
+            int dock_y = vesa_height - dock_h - 10;
+            
+            if (my >= dock_y && my <= dock_y + dock_h && mx >= dock_x && mx <= dock_x + dock_w) {
+                clicked_on_something = 1;
+                redraw_needed = 1;
+                
+                if (mx >= dock_x + 10 && mx <= dock_x + 50) {
+                    // Terminal
+                    extern window_t* shell_window;
+                    shell_window = wm_create_window(50, 50, 600, 400, "Terminal");
+                } else if (mx >= dock_x + 70 && mx <= dock_x + 110) {
+                    // File Explorer
+                    window_t* fe_win = wm_create_window(100, 100, 400, 300, "File Explorer");
+                    char name[100];
+                    for (int i = 0; tar_get_file_at_index(i, name); i++) {
+                        for(int j = 0; name[j]; j++) wm_putchar(fe_win, name[j]);
+                        wm_putchar(fe_win, '\n');
+                    }
+                } else if (mx >= dock_x + 130 && mx <= dock_x + 170) {
+                    // Snake
+                    window_t* snake_win = wm_create_window(200, 150, 400, 400, "Snake");
+                    snake_init(snake_win);
+                } else if (mx >= dock_x + 190 && mx <= dock_x + 230) {
+                    // Reverser
+                    window_t* txt_win = wm_create_window(150, 150, 400, 300, "Text Reverser");
+                    size_t file_size;
+                    char* data = (char*)tar_get_file("readme.txt", &file_size);
+                    if (data) {
+                        for(int j = (int)file_size - 1; j >= 0; j--) {
+                            wm_putchar(txt_win, data[j]);
+                        }
+                    }
+                } else if (mx >= dock_x + 250 && mx <= dock_x + 290) {
+                    // Switch Theme
+                    static int theme_idx = 0;
+                    theme_idx = !theme_idx;
+                    extern theme_t theme_win95, theme_ubuntu;
+                    current_theme = theme_idx ? theme_ubuntu : theme_win95;
+                }
             }
         }
         
@@ -539,50 +568,13 @@ void wm_process_events(void) {
             redraw_needed = 1;
         }
         
-        // Check Desktop Icons
-        if (!clicked_on_something && !start_menu_open) {
-            for (int i = 0; i < num_icons; i++) {
-                int text_len = strlen(icons[i].name);
-                int text_x = icons[i].x + (icons[i].w / 2) - ((text_len * 8) / 2);
-                
-                // Bounding box includes icon and text
-                if (mx >= text_x - 5 && mx <= text_x + (text_len * 8) + 5 &&
-                    my >= icons[i].y && my <= icons[i].y + icons[i].h + 20) {
-                    
-                    char* name = icons[i].name;
-                    int len = strlen(name);
-                    if (len >= 4 && strcmp(&name[len-4], ".bmp") == 0) {
-                        char title[100];
-                        strcpy(title, "Image Viewer - ");
-                        strncat(title, name, 63);
-                        window_t* img_win = wm_create_window(250, 150, 500, 400, title);
-                        extern void bmp_load_to_window(const char*, window_t*);
-                        bmp_load_to_window(name, img_win);
-                    } else if (len >= 4 && strcmp(&name[len-4], ".txt") == 0) {
-                        char title[100];
-                        strcpy(title, "Notepad - ");
-                        strncat(title, name, 63);
-                        window_t* txt_win = wm_create_window(200, 200, 400, 300, title);
-                        size_t file_size;
-                        char* data = (char*)tar_get_file(name, &file_size);
-                        if (data) {
-                            for(size_t j=0; j<file_size; j++) {
-                                wm_putchar(txt_win, data[j]);
-                            }
-                        }
-                    }
-                    clicked_on_something = 1;
-                    redraw_needed = 1;
-                    break;
-                }
-            }
-        }
+        // (Desktop icons logic removed for modern dock)
         
     } else if (left_click_just_released) {
         if (start_btn_pressed) {
             start_btn_pressed = 0;
-            // Check if we released while still over the button
-            if (mx >= 5 && mx <= 65 && my >= (int)(vesa_height - 25) && my <= (int)(vesa_height - 5)) {
+            // Check if we released while still over the Activities button
+            if (mx >= 0 && mx <= 80 && my >= 0 && my <= 24) {
                 start_menu_open = !start_menu_open;
             }
             redraw_needed = 1;
