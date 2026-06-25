@@ -1,6 +1,7 @@
 /* Mark stack as non-executable to silence linker warning */
 .section .note.GNU-stack,"",@progbits
 
+.section .text
 /*
  * ISR and IRQ stub trampolines.
  * Each stub pushes a dummy error code (if the CPU doesn't) and the interrupt
