@@ -100,7 +100,7 @@ static void putentryat(char c, uint8_t color, uint32_t x, uint32_t y) {
 }
 
 void terminal_putchar(char c) {
-    if (shell_window) {
+    if (shell_window && shell_window->active) {
         wm_putchar(shell_window, c);
         return;
     }

@@ -158,6 +158,12 @@ static void wm_render(void) {
         vesa_draw_rect(w->x, w->y, w->w, 20, 0x0000A0); // Dark Blue
         wm_draw_string(w->x + 5, w->y + 6, w->title, 0xFFFFFF); // White Text
         
+        // Close Button (Red 'X')
+        vesa_draw_rect(w->x + w->w - 18, w->y + 2, 16, 16, 0xC00000);
+        vesa_draw_rect(w->x + w->w - 18, w->y + 2, 16, 1, 0xFF8080); // top highlight
+        vesa_draw_rect(w->x + w->w - 18, w->y + 2, 1, 16, 0xFF8080); // left highlight
+        wm_draw_string(w->x + w->w - 14, w->y + 6, "x", 0xFFFFFF);
+        
         // Draw the inner buffer
         for (uint32_t yy = 0; yy < w->h; yy++) {
             for (uint32_t xx = 0; xx < w->w; xx++) {
@@ -297,6 +303,20 @@ void wm_process_events(void) {
             for (int i = num_windows - 1; i >= 0; i--) {
                 window_t* w = &windows[i];
                 if (w->active) {
+                    // Check if click is inside the Close Button (X)
+                    if (mx >= (int)(w->x + w->w - 18) && mx <= (int)(w->x + w->w - 2) &&
+                        my >= (int)(w->y + 2) && my <= (int)(w->y + 18)) {
+                        w->active = 0; // Close the window
+                        extern window_t* shell_window;
+                        if (shell_window == w) {
+                            shell_window = 0; // Safely disconnect shell output
+                        }
+                        clicked_on_something = 1;
+                        redraw_needed = 1;
+                        break;
+                    }
+                    
+                    // Check if click is inside the title bar (for dragging)
                     if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
                         my >= (int)w->y && my <= (int)(w->y + 20)) {
                         drag_win_idx = i;
