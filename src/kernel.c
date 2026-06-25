@@ -91,7 +91,20 @@ void terminal_writestring(const char* data) {
     while (*data) terminal_putchar(*data++);
 }
 
-void kernel_main(void) {
+static const char hex_chars[] = "0123456789ABCDEF";
+void terminal_writehex(uint32_t n) {
+    terminal_writestring("0x");
+    for (int i = 28; i >= 0; i -= 4) {
+        terminal_putchar(hex_chars[(n >> i) & 0xF]);
+    }
+}
+
+#include "multiboot.h"
+#include "pmm.h"
+#include "paging.h"
+#include "kheap.h"
+
+void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_initialize();
 
     gdt_init();
@@ -99,9 +112,36 @@ void kernel_main(void) {
     keyboard_init();
 
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
-    terminal_writestring("myOS Phase 2\n");
+    terminal_writestring("myOS Phase 3\n");
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     terminal_writestring("GDT: loaded | IDT: loaded | Keyboard: ready\n");
+    terminal_writestring("----------------------------------------\n");
+
+    if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
+        terminal_writestring("Invalid Multiboot magic!\n");
+        return;
+    }
+
+    terminal_writestring("Initializing Memory Subsystems...\n");
+    pmm_init(mbi);
+    paging_init();
+    kheap_init();
+    terminal_writestring("Memory Managers: ONLINE\n");
+
+    terminal_writestring("Testing kmalloc()...\n");
+    void* ptr1 = kmalloc(128);
+    void* ptr2 = kmalloc(256);
+    
+    terminal_writestring("ptr1 allocated at: ");
+    terminal_writehex((uint32_t)ptr1);
+    terminal_writestring("\nptr2 allocated at: ");
+    terminal_writehex((uint32_t)ptr2);
+    terminal_writestring("\n");
+
+    kfree(ptr1);
+    kfree(ptr2);
+    terminal_writestring("Memory freed successfully!\n");
+
     terminal_writestring("----------------------------------------\n");
     terminal_writestring("Type something:\n> ");
 }

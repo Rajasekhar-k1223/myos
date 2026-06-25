@@ -38,6 +38,10 @@ _start:
 	/* Set up the stack. */
 	mov $stack_top, %esp
 
+	/* Push multiboot info struct pointer and magic number */
+	push %ebx
+	push %eax
+
 	/* Call the global constructors. */
 	/* call _init */
 
