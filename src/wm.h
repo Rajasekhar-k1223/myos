@@ -21,11 +21,14 @@ typedef struct {
     /* Virtual desktop this window lives on (0-3) */
     int      desktop_id;
     /* Terminal Scrollback */
-    char*    term_grid;
+    uint32_t* term_grid;
     uint32_t term_cols;
     uint32_t term_rows;
     uint32_t term_line;
     int      term_scroll;
+    /* ANSI Escape State */
+    int      ansi_state;
+    int      ansi_param;
 } window_t;
 
 typedef struct {

@@ -229,8 +229,12 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
         win->term_rows = 256;
         win->term_line = 0;
         win->term_scroll = 0;
-        win->term_grid = (char*)kmalloc(win->term_rows * win->term_cols);
-        memset(win->term_grid, ' ', win->term_rows * win->term_cols);
+        win->ansi_state = 0;
+        win->ansi_param = 0;
+        win->term_grid = (uint32_t*)kmalloc(win->term_rows * win->term_cols * 4);
+        for (uint32_t i = 0; i < win->term_rows * win->term_cols; i++) {
+            win->term_grid[i] = (' ') | (0xAAAAAA << 8);
+        }
     } else {
         win->term_grid = NULL;
     }
@@ -495,7 +499,9 @@ void wm_redraw_term(window_t* win) {
     int draw_y = 0;
     for (int y = start_line; y <= (int)win->term_line && draw_y < lines_visible; y++) {
         for (uint32_t x = 0; x < win->term_cols; x++) {
-            char c = win->term_grid[y * win->term_cols + x];
+            uint32_t cell = win->term_grid[y * win->term_cols + x];
+            char c = (char)(cell & 0xFF);
+            uint32_t cell_fg = cell >> 8;
             if (c >= ' ') {
                 unsigned char uc = (unsigned char)c;
                 for (int row = 0; row < 16; row++) {
@@ -503,7 +509,7 @@ void wm_redraw_term(window_t* win) {
                     for (int col = 0; col < 8; col++) {
                         if (row_data & (1 << (7 - col))) {
                             if ((uint32_t)(draw_y * 16 + row) < win->h && (uint32_t)(x * 8 + col) < win->w) {
-                                win->buffer[(draw_y * 16 + row) * win->w + (x * 8 + col)] = win->fg_color;
+                                win->buffer[(draw_y * 16 + row) * win->w + (x * 8 + col)] = cell_fg;
                             }
                         }
                     }
@@ -529,18 +535,53 @@ void wm_putchar(window_t* win, char c) {
     }
 
     if (win->term_grid) {
+        /* ANSI Escape Parsing */
+        if (win->ansi_state == 1) {
+            if (c == '[') win->ansi_state = 2;
+            else win->ansi_state = 0;
+            return;
+        } else if (win->ansi_state == 2) {
+            if (c >= '0' && c <= '9') {
+                win->ansi_param = win->ansi_param * 10 + (c - '0');
+                return;
+            } else if (c == 'm') {
+                uint32_t ansi_colors[8] = {0x000000, 0xAA0000, 0x00AA00, 0xAA5500, 0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA};
+                if (win->ansi_param >= 30 && win->ansi_param <= 37) {
+                    win->fg_color = ansi_colors[win->ansi_param - 30];
+                } else if (win->ansi_param == 0) {
+                    win->fg_color = 0xAAAAAA;
+                }
+                win->ansi_state = 0;
+                win->ansi_param = 0;
+                return;
+            } else if (c == ';') {
+                /* Ignore complex codes for now */
+                win->ansi_state = 0;
+                return;
+            } else {
+                win->ansi_state = 0;
+                return;
+            }
+        }
+        if (c == '\033') {
+            win->ansi_state = 1;
+            win->ansi_param = 0;
+            return;
+        }
         if (c == '\b') {
             if (win->cursor_x >= 8) {
                 win->cursor_x -= 8;
                 int term_x = win->cursor_x / 8;
-                win->term_grid[win->term_line * win->term_cols + term_x] = ' ';
+                win->term_grid[win->term_line * win->term_cols + term_x] = (' ') | (win->fg_color << 8);
             }
         } else if (c == '\n') {
             win->cursor_x = 0;
             win->term_line++;
             if (win->term_line >= win->term_rows) {
-                memmove(win->term_grid, win->term_grid + win->term_cols, (win->term_rows - 1) * win->term_cols);
-                memset(win->term_grid + (win->term_rows - 1) * win->term_cols, ' ', win->term_cols);
+                memmove(win->term_grid, win->term_grid + win->term_cols, (win->term_rows - 1) * win->term_cols * 4);
+                for (uint32_t i = 0; i < win->term_cols; i++) {
+                    win->term_grid[(win->term_rows - 1) * win->term_cols + i] = (' ') | (win->fg_color << 8);
+                }
                 win->term_line--;
             }
         } else if (c == '\r') {
@@ -548,7 +589,7 @@ void wm_putchar(window_t* win, char c) {
         } else if (c >= ' ') {
             int term_x = win->cursor_x / 8;
             if (term_x < (int)win->term_cols) {
-                win->term_grid[win->term_line * win->term_cols + term_x] = c;
+                win->term_grid[win->term_line * win->term_cols + term_x] = ((uint32_t)c) | (win->fg_color << 8);
             }
             win->cursor_x += 8;
         }
@@ -557,8 +598,10 @@ void wm_putchar(window_t* win, char c) {
             win->cursor_x = 0;
             win->term_line++;
             if (win->term_line >= win->term_rows) {
-                memmove(win->term_grid, win->term_grid + win->term_cols, (win->term_rows - 1) * win->term_cols);
-                memset(win->term_grid + (win->term_rows - 1) * win->term_cols, ' ', win->term_cols);
+                memmove(win->term_grid, win->term_grid + win->term_cols, (win->term_rows - 1) * win->term_cols * 4);
+                for (uint32_t i = 0; i < win->term_cols; i++) {
+                    win->term_grid[(win->term_rows - 1) * win->term_cols + i] = (' ') | (win->fg_color << 8);
+                }
                 win->term_line--;
             }
         }

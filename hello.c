@@ -11,9 +11,9 @@ void syscall_print(const char* msg) {
 
 void _start() {
     syscall_print("\n");
-    syscall_print("========================================\n");
-    syscall_print("  HELLO FROM DYNAMICALLY LOADED ELF!    \n");
-    syscall_print("========================================\n");
+    syscall_print("\033[36m========================================\033[0m\n");
+    syscall_print("  \033[32mHELLO FROM DYNAMICALLY LOADED ELF!\033[0m    \n");
+    syscall_print("\033[36m========================================\033[0m\n");
     
     // Tell task scheduler to exit this thread
     __asm__ volatile ("int $0x80" : : "a"(1));
