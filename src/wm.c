@@ -13,6 +13,7 @@
 #include "clock.h"
 #include "wallpaper.h"
 #include "paint.h"
+#include "explorer.h"
 
 #define MAX_WINDOWS 10
 
@@ -330,7 +331,7 @@ static void wm_render(void) {
     wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
     
     // Bottom Dock (Modern floating launcher)
-    int dock_w = 560; // Expanded for Paint
+    int dock_w = 620; // Expanded for Explorer
     int dock_h = 50;
     int dock_x = (vesa_width - dock_w) / 2;
     int dock_y = vesa_height - dock_h - 10;
@@ -366,6 +367,9 @@ static void wm_render(void) {
     // Paint
     vesa_draw_rect(dock_x + 490, dock_y + 5, 40, 40, 0xFF00FF);
     wm_draw_string(dock_x + 495, dock_y + 20, "Paint", 0xFFFFFF);
+    // Explorer
+    vesa_draw_rect(dock_x + 550, dock_y + 5, 40, 40, 0xDAA520);
+    wm_draw_string(dock_x + 555, dock_y + 20, "Files", 0xFFFFFF);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
@@ -483,7 +487,7 @@ void wm_process_events(void) {
         
         // Check Dock Clicks
         if (!clicked_on_something && !start_menu_open) {
-            int dock_w = 560;
+            int dock_w = 620;
             int dock_h = 50;
             int dock_x = (vesa_width - dock_w) / 2;
             int dock_y = vesa_height - dock_h - 10;
@@ -540,6 +544,10 @@ void wm_process_events(void) {
                     // Paint
                     window_t* paint_win = wm_create_window(150, 100, 400, 300, "Paint");
                     paint_init(paint_win);
+                } else if (mx >= dock_x + 550 && mx <= dock_x + 590) {
+                    // Explorer
+                    window_t* exp_win = wm_create_window(100, 100, 400, 300, "File Explorer");
+                    explorer_init(exp_win);
                 }
             }
         }
@@ -637,6 +645,15 @@ void wm_process_events(void) {
                         mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
                         my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
                         paint_handle_click(w, mx, my);
+                        clicked_on_something = 1;
+                        break;
+                    }
+                    
+                    // Check if click is inside File Explorer
+                    if (strcmp(w->title, "File Explorer") == 0 &&
+                        mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                        my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        explorer_handle_click(w, mx, my);
                         clicked_on_something = 1;
                         break;
                     }
