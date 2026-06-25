@@ -7,6 +7,7 @@
 #include "tar.h"
 #include "task.h"
 #include "io.h"
+#include "ata.h"
 
 /* ── Buffer / state ──────────────────────────────────────────────────────── */
 #define BUF_SIZE      256
@@ -294,6 +295,27 @@ static void execute(void) {
     else if (strncmp(cmd, "calc ",   5) == 0) cmd_calc(cmd + 5);
     else if (strncmp(cmd, "hexdump", 7) == 0) cmd_hexdump(cmd[7] ? cmd + 8 : "0x100000");
     else if (strncmp(cmd, "color ",  6) == 0) cmd_color(cmd + 6);
+    else if (strncmp(cmd, "hdread ", 7) == 0) {
+        int lba = (int)strtol(cmd + 7, NULL, 10);
+        uint8_t buf[512];
+        ata_read_sector(lba, buf);
+        buf[511] = '\0';
+        terminal_printf("  Sector %d: %s\n", lba, (char*)buf);
+    }
+    else if (strncmp(cmd, "hdwrite ", 8) == 0) {
+        int lba = 1; // Default
+        char* text = cmd + 8;
+        if (*text >= '0' && *text <= '9') {
+            char* p;
+            lba = (int)strtol(text, &p, 10);
+            text = p;
+            while (*text == ' ') text++;
+        }
+        uint8_t buf[512] = {0};
+        strcpy((char*)buf, text);
+        ata_write_sector(lba, buf);
+        terminal_printf("  Wrote to sector %d!\n", lba);
+    }
     else {
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
         terminal_printf("  Command not found: %s\n", cmd);

@@ -18,8 +18,9 @@
 #include "io.h"
 #include "bmp.h"
 #include "mouse.h"
-
+#include "vesa.h"
 #include "wm.h"
+#include "ata.h"
 
 window_t* shell_window = 0;
 
