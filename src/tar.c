@@ -99,3 +99,28 @@ void tar_cat(const char* filename) {
     terminal_writestring(filename);
     terminal_writestring("\n");
 }
+
+void* tar_get_file(const char* filename, size_t* out_size) {
+    if (!tar_address) return NULL;
+
+    uint32_t current_address = tar_address;
+    
+    while (1) {
+        tar_header_t* header = (tar_header_t*)current_address;
+        if (header->name[0] == '\0') break;
+
+        uint32_t size = parse_octal(header->size, 11);
+        
+        if ((header->typeflag == '0' || header->typeflag == '\0') && 
+            strcmp(header->name, filename) == 0) {
+            
+            if (out_size) *out_size = size;
+            return (void*)(current_address + 512);
+        }
+        
+        uint32_t data_blocks = (size + 511) / 512;
+        current_address += 512 + (data_blocks * 512);
+    }
+
+    return NULL;
+}

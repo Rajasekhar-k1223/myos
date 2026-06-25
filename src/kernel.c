@@ -16,6 +16,7 @@
 #include "task.h"
 #include "shell.h"
 #include "io.h"
+#include "bmp.h"
 
 /* ── VESA Terminal Driver ────────────────────────────────────────────────── */
 #include "font.h"
@@ -299,6 +300,7 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
         }
         if (mounted) {
             boot_ok("VFS", "RAM disk (initrd.tar) mounted via multiboot module");
+            bmp_draw_file("logo.bmp", 850, 50); // Draw the generated logo in the top right!
         } else {
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
             terminal_writestring(BOX_V "  [WARN]  No RAM disk found — 'ls' and 'cat' unavailable\n");
