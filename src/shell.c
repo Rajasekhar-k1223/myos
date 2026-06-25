@@ -390,6 +390,7 @@ static void wizard(void) {
 
 /* ── shell_init ──────────────────────────────────────────────────────────── */
 void shell_init(void) {
-    wizard();
+    // Skip the first-boot wizard since we are in the GUI now
+    // and the wizard uses blocking polling which would freeze the compositor!
     print_prompt();
 }

@@ -7,14 +7,6 @@
 
 #define MAX_WINDOWS 10
 
-typedef struct {
-    uint32_t x, y;
-    uint32_t w, h;
-    char title[64];
-    uint32_t* buffer;
-    int active;
-} window_t;
-
 static window_t windows[MAX_WINDOWS];
 static int num_windows = 0;
 static int redraw_needed = 1;
@@ -50,8 +42,8 @@ void wm_request_redraw(void) {
     redraw_needed = 1;
 }
 
-void wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const char* title) {
-    if (num_windows >= MAX_WINDOWS) return;
+window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const char* title) {
+    if (num_windows >= MAX_WINDOWS) return NULL;
     window_t* win = &windows[num_windows++];
     win->x = x;
     win->y = y;
@@ -59,13 +51,19 @@ void wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const char
     win->h = h;
     strncpy(win->title, title, 63);
     win->active = 1;
+    win->cursor_x = 0;
+    win->cursor_y = 0;
+    win->fg_color = 0xAAAAAA; // Default Light Gray Text
+    win->bg_color = 0x000000; // Default Black Background
+    
     win->buffer = (uint32_t*)kmalloc(w * h * 4);
     
-    // Fill window with a nice light gray
+    // Fill window with background color
     for (uint32_t i = 0; i < w * h; i++) {
-        win->buffer[i] = 0xE0E0E0; 
+        win->buffer[i] = win->bg_color; 
     }
     redraw_needed = 1;
+    return win;
 }
 
 static void wm_draw_string(uint32_t x, uint32_t y, const char* str, uint32_t fg) {
@@ -80,6 +78,58 @@ static void wm_draw_string(uint32_t x, uint32_t y, const char* str, uint32_t fg)
             }
         }
     }
+}
+
+void wm_putchar(window_t* win, char c) {
+    if (!win || !win->buffer) return;
+    
+    if (c == '\n') {
+        win->cursor_x = 0;
+        win->cursor_y += 8;
+    } else if (c == '\r') {
+        win->cursor_x = 0;
+    } else if (c == '\b') {
+        if (win->cursor_x >= 8) {
+            win->cursor_x -= 8;
+            // Clear the 8x8 character cell
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    if (win->cursor_y + y < win->h && win->cursor_x + x < win->w) {
+                        win->buffer[(win->cursor_y + y) * win->w + (win->cursor_x + x)] = win->bg_color;
+                    }
+                }
+            }
+        }
+    } else if (c >= ' ') {
+        unsigned char uc = (unsigned char)c;
+        for (int row = 0; row < 8; row++) {
+            uint8_t row_data = font8x8[uc][row];
+            for (int col = 0; col < 8; col++) {
+                if ((row_data & (1 << col)) && (win->cursor_y + row < win->h) && (win->cursor_x + col < win->w)) {
+                    win->buffer[(win->cursor_y + row) * win->w + (win->cursor_x + col)] = win->fg_color;
+                }
+            }
+        }
+        win->cursor_x += 8;
+    }
+
+    // Wrap horizontally
+    if (win->cursor_x >= win->w) {
+        win->cursor_x = 0;
+        win->cursor_y += 8;
+    }
+    
+    // Scroll vertically if needed
+    if (win->cursor_y + 8 > win->h) {
+        // Shift everything up by 8 lines
+        memcpy(win->buffer, win->buffer + (win->w * 8), (win->h - 8) * win->w * 4);
+        // Clear bottom 8 lines
+        for (uint32_t i = (win->h - 8) * win->w; i < win->h * win->w; i++) {
+            win->buffer[i] = win->bg_color;
+        }
+        win->cursor_y -= 8;
+    }
+    redraw_needed = 1;
 }
 
 static void wm_render(void) {

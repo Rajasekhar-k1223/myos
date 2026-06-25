@@ -19,6 +19,10 @@
 #include "bmp.h"
 #include "mouse.h"
 
+#include "wm.h"
+
+window_t* shell_window = 0;
+
 /* ── VESA Terminal Driver ────────────────────────────────────────────────── */
 #include "font.h"
 #include "vesa.h"
@@ -96,6 +100,10 @@ static void putentryat(char c, uint8_t color, uint32_t x, uint32_t y) {
 }
 
 void terminal_putchar(char c) {
+    if (shell_window) {
+        wm_putchar(shell_window, c);
+        return;
+    }
     uint32_t vesa_cols = vesa_width / 8;
     uint32_t vesa_rows = vesa_height / 8;
     if (vesa_cols == 0) return; // VESA not ready
@@ -338,11 +346,17 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     wm_init();
     boot_ok("GUI", "Double-buffered Compositor Started");
 
-    wm_create_window(100, 100, 400, 300, "Welcome to myOS");
-    wm_create_window(150, 150, 300, 200, "System Monitor");
+    wm_create_window(50, 50, 400, 300, "System Monitor");
+    shell_window = wm_create_window(150, 100, 600, 400, "Terminal");
+
+    // Start the shell prompt
+    extern void shell_init(void);
+    shell_init();
 
     while (1) {
         wm_process_events();
+        // Since shell runs in the background, we don't block.
+        // We could hlt, but keyboard events wake it up.
         __asm__ volatile("hlt");
     }
 }
