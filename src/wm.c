@@ -53,6 +53,10 @@ static int       scrollbar_track_h = 0;   /* height of the track in pixels      
 
 #define SB_W 10  /* scrollbar width in pixels */
 
+/* Window snap */
+#define SNAP_ZONE 24          /* pixels from edge that triggers snap  */
+static int snap_zone = 0;    /* 0=none 1=left 2=right 3=top(maximize) */
+
 static char clock_str[20] = "";
 static uint32_t last_clock_ticks = 0;
 
@@ -934,6 +938,26 @@ static void wm_render(void) {
         redraw_needed = 1;
     }
 
+    // 5.5 Draw Snap Preview
+    if (drag_win_idx >= 0 && snap_zone != 0) {
+        uint32_t snap_y = 24;
+        uint32_t snap_h = (vesa_height > 120) ? vesa_height - 24 - 88 : vesa_height / 2;
+        uint32_t half_w = vesa_width / 2;
+        uint32_t px = 0, py = snap_y, pw = 0, ph = snap_h;
+        if (snap_zone == 1)      { px = 0;      pw = half_w; }
+        else if (snap_zone == 2) { px = half_w; pw = half_w; }
+        else if (snap_zone == 3) { px = 0; py = snap_y; pw = vesa_width; ph = vesa_height - snap_y - 88; }
+        /* Draw semi-transparent blue preview rectangle */
+        for (uint32_t yy = py; yy < py + ph && yy < vesa_height; yy++)
+            for (uint32_t xx = px; xx < px + pw && xx < vesa_width; xx++)
+                vesa_putpixel_alpha(xx, yy, 0x4488FF, 100);
+        /* Border */
+        vesa_draw_rect(px, py, pw, 2, 0x88AAFF);
+        vesa_draw_rect(px, py + ph - 2, pw, 2, 0x88AAFF);
+        vesa_draw_rect(px, py, 2, ph, 0x88AAFF);
+        vesa_draw_rect(px + pw - 2, py, 2, ph, 0x88AAFF);
+    }
+
     // 6. Draw Context Menu
     if (ctx_menu_open) {
         int cw = CTX_MENU_W;
@@ -1448,11 +1472,41 @@ void wm_process_events(void) {
             }
             redraw_needed = 1;
         }
+        /* Apply window snap on drag release */
+        if (drag_win_idx >= 0 && snap_zone != 0) {
+            window_t* sw = &windows[drag_win_idx];
+            /* Usable content area: below top bar, above taskbar strip+dock */
+            uint32_t snap_y = 24;
+            uint32_t snap_h = (vesa_height > 120) ? vesa_height - 24 - 88 : vesa_height / 2;
+            uint32_t half_w = vesa_width / 2;
+            if (snap_zone == 1) {          /* left half */
+                sw->x = 0; sw->y = snap_y;
+                wm_do_resize(sw, half_w, snap_h);
+                wm_toast("Snapped: left", 80);
+            } else if (snap_zone == 2) {   /* right half */
+                sw->x = half_w; sw->y = snap_y;
+                wm_do_resize(sw, half_w, snap_h);
+                wm_toast("Snapped: right", 80);
+            } else if (snap_zone == 3) {   /* maximize via top edge */
+                if (!sw->maximized) wm_maximize_toggle(sw);
+                wm_toast("Maximized", 80);
+            }
+            snap_zone = 0;
+            redraw_needed = 1;
+        } else {
+            snap_zone = 0;
+        }
         drag_win_idx = -1;
     } else if (left_click_held && drag_win_idx >= 0) {
         windows[drag_win_idx].x = mx - drag_off_x;
         windows[drag_win_idx].y = my - drag_off_y;
-        redraw_needed = 1;
+        /* Detect snap zone from mouse position */
+        int new_snap = 0;
+        if (mx < SNAP_ZONE)                        new_snap = 1; /* left  */
+        else if (mx > (int)vesa_width - SNAP_ZONE) new_snap = 2; /* right */
+        else if (my < SNAP_ZONE + 4)               new_snap = 3; /* top   */
+        if (new_snap != snap_zone) { snap_zone = new_snap; redraw_needed = 1; }
+        else redraw_needed = 1;
     } else if (left_click_held && drag_win_idx == -1) {
         if (focused_window && strcmp(focused_window->title, "Paint") == 0) {
             paint_handle_click(focused_window, mx, my);

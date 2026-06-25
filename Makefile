@@ -10,7 +10,7 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/vesa.c src/bmp.c src/mouse.c src/wm.c \
          src/snake.c src/calc.c src/clock.c src/wallpaper.c \
          src/paint.c src/ata.c src/fs.c src/fat16.c src/explorer.c src/speaker.c \
-         src/minesweeper.c src/settings.c
+         src/minesweeper.c src/settings.c src/elf.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
@@ -33,7 +33,12 @@ disk.img:
 # Dual BIOS + UEFI bootable ISO.
 # grub-mkrescue includes i386-pc (BIOS) + x86_64-efi (UEFI) when both
 # grub-efi-amd64-bin and grub-pc-bin packages are installed.
-elsea.iso: elsea.bin disk.img
+
+hello.elf: hello.c
+	$(CC) -m32 -ffreestanding -fno-pie -fno-pic -nostdlib -Wl,-Ttext=0x08048000 hello.c -o hello.elf
+	cp hello.elf initrd/hello.elf
+
+elsea.iso: elsea.bin disk.img hello.elf
 	mkdir -p isodir/boot/grub
 	cp elsea.bin isodir/boot/elsea.bin
 	cp grub/grub.cfg isodir/boot/grub/grub.cfg

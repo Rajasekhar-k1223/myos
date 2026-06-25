@@ -17,6 +17,14 @@ static void syscall_handler(struct registers* regs) {
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
             break;
         }
+        case 1: { // sys_exit
+            extern void task_exit(void);
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+            terminal_writestring("[Syscall] Thread exited.\n");
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+            task_exit();
+            break;
+        }
         default:
             terminal_writestring("Unknown syscall: ");
             terminal_writedec(syscall_no);
