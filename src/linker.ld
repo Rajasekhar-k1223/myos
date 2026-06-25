@@ -15,7 +15,7 @@ SECTIONS
 	   Next we'll put the .text section. */
 	.text BLOCK(4K) : ALIGN(4K)
 	{
-		*(.multiboot)
+		*(.multiboot2)   /* Multiboot2 header — must appear within first 32 KB */
 		*(.text)
 	}
 

@@ -1,48 +1,47 @@
 #include "pmm.h"
+#include "multiboot.h"
 #include "string.h"
 
 static uint32_t pmm_bitmap[PMM_MAX_FRAMES / 32];
 static uint32_t pmm_used_frames = 0;
-static uint32_t pmm_max_frames = 0;
+static uint32_t pmm_max_frames  = 0;
 
-static inline void pmm_set(uint32_t frame) {
-    pmm_bitmap[frame / 32] |= (1 << (frame % 32));
-}
+static inline void pmm_set(uint32_t frame)  { pmm_bitmap[frame/32] |=  (1u << (frame%32)); }
+static inline void pmm_clear(uint32_t frame) { pmm_bitmap[frame/32] &= ~(1u << (frame%32)); }
+static inline int  pmm_test(uint32_t frame)  { return pmm_bitmap[frame/32] &  (1u << (frame%32)); }
 
-static inline void pmm_clear(uint32_t frame) {
-    pmm_bitmap[frame / 32] &= ~(1 << (frame % 32));
-}
+/*
+ * Initialise from Multiboot2 mmap tag (type 6).
+ * mmap_tag_addr  = physical address of struct mb2_tag_mmap
+ * entry_size     = bytes per mb2_mmap_entry (usually 24)
+ * total_bytes    = tag->size - 16  (total entry data bytes)
+ */
+void pmm_init(uint32_t mmap_tag_addr, uint32_t entry_size, uint32_t total_bytes) {
+    memset(pmm_bitmap, 0xFF, sizeof(pmm_bitmap));
+    pmm_max_frames  = 0;
+    pmm_used_frames = 0;
 
-static inline int pmm_test(uint32_t frame) {
-    return pmm_bitmap[frame / 32] & (1 << (frame % 32));
-}
+    uint32_t offset = 0;
+    while (offset + entry_size <= total_bytes) {
+        struct mb2_mmap_entry* e =
+            (struct mb2_mmap_entry*)(mmap_tag_addr + offset);
 
-void pmm_init(struct multiboot_info* mbi) {
-    memset(pmm_bitmap, 0xFF, sizeof(pmm_bitmap)); // Mark all used by default
+        uint32_t addr = (uint32_t)(e->addr & 0xFFFFFFFFu);
+        uint32_t len  = (uint32_t)(e->len  & 0xFFFFFFFFu);
 
-    // Read multiboot memory map to find available RAM
-    if (mbi->flags & (1 << 6)) {
-        struct multiboot_mmap_entry* mmap = (struct multiboot_mmap_entry*)mbi->mmap_addr;
-        while ((uint32_t)mmap < mbi->mmap_addr + mbi->mmap_length) {
-            if (mmap->type == MULTIBOOT_MEMORY_AVAILABLE) {
-                uint32_t addr = mmap->addr_low;
-                uint32_t len = mmap->len_low;
-                uint32_t max_addr = addr + len;
-                if (max_addr > pmm_max_frames * PMM_FRAME_SIZE) {
-                    pmm_max_frames = max_addr / PMM_FRAME_SIZE;
-                }
-                for (uint32_t i = 0; i < len; i += PMM_FRAME_SIZE) {
-                    pmm_clear((addr + i) / PMM_FRAME_SIZE);
-                }
-            }
-            mmap = (struct multiboot_mmap_entry*)((uint32_t)mmap + mmap->size + sizeof(mmap->size));
+        if (e->type == MB2_MMAP_AVAILABLE) {
+            if (addr + len > pmm_max_frames * PMM_FRAME_SIZE)
+                pmm_max_frames = (addr + len) / PMM_FRAME_SIZE;
+            for (uint32_t i = 0; i < len; i += PMM_FRAME_SIZE)
+                pmm_clear((addr + i) / PMM_FRAME_SIZE);
         }
+
+        offset += entry_size;
     }
 
-    // Protect kernel memory (assuming kernel loads at 1MB and takes less than 1MB for now)
-    for (uint32_t i = 0; i < 0x200000 / PMM_FRAME_SIZE; i++) {
+    /* protect first 2 MB (BIOS data, kernel, stack) */
+    for (uint32_t i = 0; i < 0x200000u / PMM_FRAME_SIZE; i++)
         pmm_set(i);
-    }
 }
 
 void* pmm_alloc_frame(void) {
@@ -53,14 +52,14 @@ void* pmm_alloc_frame(void) {
             return (void*)(i * PMM_FRAME_SIZE);
         }
     }
-    return NULL; // Out of memory
+    return 0;
 }
 
 void pmm_free_frame(void* addr) {
     uint32_t frame = (uint32_t)addr / PMM_FRAME_SIZE;
     pmm_clear(frame);
-    pmm_used_frames--;
+    if (pmm_used_frames) pmm_used_frames--;
 }
 
 uint32_t pmm_get_used_frames(void) { return pmm_used_frames; }
-uint32_t pmm_get_max_frames(void)  { return pmm_max_frames; }
+uint32_t pmm_get_max_frames(void)  { return pmm_max_frames;  }

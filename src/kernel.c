@@ -20,6 +20,8 @@
 #include "mouse.h"
 #include "vesa.h"
 #include "wm.h"
+#include "syscall.h"
+#include "user.h"
 #include "ata.h"
 #include "fs.h"
 #include "speaker.h"
@@ -210,13 +212,70 @@ static void boot_section(const char* title) {
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
 }
 
-/* ── kernel_main ─────────────────────────────────────────────────────────── */
-void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
-    if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
-        for (;;) __asm__ volatile("cli; hlt"); // Cannot even print without VESA
-    }
+/* ── Multiboot2 tag parser ────────────────────────────────────────────────── */
+static void parse_mb2_tags(uint32_t mb2_addr,
+                            uint32_t* out_fb_addr,   uint32_t* out_fb_w,
+                            uint32_t* out_fb_h,      uint32_t* out_fb_pitch,
+                            uint8_t*  out_fb_bpp,
+                            uint32_t* out_mmap_addr, uint32_t* out_mmap_esize,
+                            uint32_t* out_mmap_bytes,
+                            uint32_t* out_initrd_start) {
+    struct mb2_info* info = (struct mb2_info*)mb2_addr;
+    struct mb2_tag*  tag  = mb2_first_tag(info);
 
-    vesa_init(mbi);
+    while (tag->type != MB2_TAG_END) {
+        switch (tag->type) {
+
+        case MB2_TAG_FRAMEBUFFER: {
+            struct mb2_tag_framebuffer* fb =
+                (struct mb2_tag_framebuffer*)tag;
+            *out_fb_addr  = (uint32_t)(fb->framebuffer_addr & 0xFFFFFFFFu);
+            *out_fb_w     = fb->framebuffer_width;
+            *out_fb_h     = fb->framebuffer_height;
+            *out_fb_pitch = fb->framebuffer_pitch;
+            *out_fb_bpp   = fb->framebuffer_bpp;
+            break;
+        }
+
+        case MB2_TAG_MMAP: {
+            struct mb2_tag_mmap* mm = (struct mb2_tag_mmap*)tag;
+            /* entry data starts right after the 16-byte tag header */
+            *out_mmap_addr  = (uint32_t)mm + 16;
+            *out_mmap_esize = mm->entry_size;
+            *out_mmap_bytes = mm->size - 16;
+            break;
+        }
+
+        case MB2_TAG_MODULE: {
+            struct mb2_tag_module* mod = (struct mb2_tag_module*)tag;
+            *out_initrd_start = mod->mod_start;
+            break;
+        }
+
+        default: break;
+        }
+        tag = mb2_next_tag(tag);
+    }
+}
+
+/* ── kernel_main ─────────────────────────────────────────────────────────── */
+void kernel_main(uint32_t magic, uint32_t mb2_addr) {
+    if (magic != MULTIBOOT2_MAGIC)
+        for (;;) __asm__ volatile("cli; hlt");
+
+    /* ── Parse Multiboot2 tags (GOP framebuffer address, mmap, initrd) ── */
+    uint32_t fb_addr = 0, fb_w = 0, fb_h = 0, fb_pitch = 0;
+    uint8_t  fb_bpp  = 0;
+    uint32_t mmap_addr = 0, mmap_esize = 0, mmap_bytes = 0;
+    uint32_t initrd_start = 0;
+
+    parse_mb2_tags(mb2_addr,
+                   &fb_addr, &fb_w, &fb_h, &fb_pitch, &fb_bpp,
+                   &mmap_addr, &mmap_esize, &mmap_bytes,
+                   &initrd_start);
+
+    /* GOP / VBE framebuffer — same linear buffer regardless of BIOS or UEFI */
+    vesa_init(fb_addr, fb_w, fb_h, fb_pitch, fb_bpp);
     terminal_initialize();
 
     /* ── Header box ── */
@@ -230,14 +289,14 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
     terminal_writestring("  __  __  _  _  ___  ___");
     terminal_setcolor(vga_entry_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
-    terminal_writestring("        myOS  v0.8\n");
+    terminal_writestring("     ElseaOS  v1.0\n");
 
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
     terminal_writestring(BOX_V "    ");
     terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
     terminal_writestring(" |  \\/  || \\| |/ _ \\/ __|");
     terminal_setcolor(vga_entry_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
-    terminal_writestring("   32-bit Protected Mode OS\n");
+    terminal_writestring("   32-bit x86 OS with GOP/UEFI\n");
 
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
     terminal_writestring(BOX_V "    ");
@@ -251,7 +310,7 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
     terminal_writestring(" |_|  |_||_|\\_|\\___/|___/");
     terminal_setcolor(vga_entry_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
-    terminal_writestring("   GDT IDT PIT RTC PMM VFS\n");
+    terminal_writestring("   UEFI GOP WM GUI Shell ATA\n");
 
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
     terminal_writestring(BOX_V "\n");
@@ -277,7 +336,7 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     /* ── Memory Subsystem ── */
     boot_section("Memory Subsystem");
 
-    pmm_init(mbi);
+    pmm_init(mmap_addr, mmap_esize, mmap_bytes);
     {
         char det[64];
         uint32_t total_mb = (pmm_get_max_frames() * 4) / 1024;
@@ -286,8 +345,14 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
         boot_ok("PMM", det);
     }
 
-    paging_init();
-    boot_ok("PGN", "Paging enabled — first 16 MB identity mapped");
+    paging_init(); /* also maps GOP/VBE framebuffer region */
+    {
+        char det[64];
+        snprintf(det, sizeof(det),
+                 "Paging on — 16 MB mapped + GOP FB @ 0x%08X (%ux%u)",
+                 fb_addr, fb_w, fb_h);
+        boot_ok("PGN", det);
+    }
 
     kheap_init();
     boot_ok("HEP", "1 MB kernel heap initialized");
@@ -305,20 +370,13 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     /* ── Storage ── */
     boot_section("Virtual Filesystem");
     {
-        int mounted = 0;
-        if (mbi->flags & (1 << 3)) {
-            if (mbi->mods_count > 0) {
-                struct multiboot_module* mod = (struct multiboot_module*)mbi->mods_addr;
-                tar_init(mod->mod_start);
-                mounted = 1;
-            }
-        }
-        if (mounted) {
-            boot_ok("VFS", "RAM disk (initrd.tar) mounted via multiboot module");
-            bmp_draw_file("logo.bmp", 850, 50); // Draw the generated logo in the top right!
+        if (initrd_start) {
+            tar_init(initrd_start);
+            boot_ok("VFS", "RAM disk (initrd.tar) mounted via Multiboot2 module");
+            bmp_draw_file("logo.bmp", 850, 50);
         } else {
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
-            terminal_writestring(BOX_V "  [WARN]  No RAM disk found — 'ls' and 'cat' unavailable\n");
+            terminal_writestring(BOX_V "  [WARN]  No RAM disk — ls/cat unavailable\n");
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
         }
     }
@@ -332,11 +390,9 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
 
     /* ── User Mode ── */
     boot_section("User Mode & Syscalls");
-#include "syscall.h"
-#include "user.h"
     syscall_init();
-    boot_ok("SYS", "INT 0x80 System Call Interface registered");
-    boot_ok("USR", "Jumping to Ring 3 User Space...");
+    boot_ok("SYS", "INT 0x80 syscall gate registered");
+    boot_ok("GOP", "UEFI/BIOS GOP framebuffer active");
 
     /* ── Close boot box ── */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
@@ -344,22 +400,17 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     terminal_putchar('\n');
 
-#include "wm.h"
     boot_section("Window Manager");
     wm_init();
-    boot_ok("GUI", "Double-buffered Compositor Started");
+    boot_ok("WM ", "ElseaOS compositing window manager started");
 
     wm_create_window(50, 50, 400, 300, "System Monitor");
     shell_window = wm_create_window(150, 100, 600, 400, "Terminal");
 
-    // Start the shell prompt
-    extern void shell_init(void);
     shell_init();
 
     while (1) {
         wm_process_events();
-        // Since shell runs in the background, we don't block.
-        // We could hlt, but keyboard events wake it up.
         __asm__ volatile("hlt");
     }
 }

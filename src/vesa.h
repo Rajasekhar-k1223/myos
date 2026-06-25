@@ -5,7 +5,9 @@
 extern uint32_t vesa_width;
 extern uint32_t vesa_height;
 
-void vesa_init(struct multiboot_info* mbi);
+/* Primary init: called with GOP/VBE framebuffer params from Multiboot2 tag */
+void vesa_init(uint32_t addr, uint32_t width, uint32_t height,
+               uint32_t pitch, uint8_t bpp);
 void vesa_init_backbuffer(void);
 void vesa_set_double_buffer(int enable);
 void vesa_swap_buffers(void);

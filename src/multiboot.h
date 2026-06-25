@@ -1,77 +1,98 @@
 #ifndef MULTIBOOT_H
 #define MULTIBOOT_H
 
+/* ── Multiboot2 ─────────────────────────────────────────────────────────────
+ * Spec: https://www.gnu.org/software/grub/manual/multiboot2/
+ * On UEFI:  GRUB uses GOP  → framebuffer tag carries GOP linear buffer.
+ * On BIOS:  GRUB uses VBE  → framebuffer tag carries VBE linear buffer.
+ * The kernel code is identical for both.
+ * ───────────────────────────────────────────────────────────────────────── */
+
 #include <stdint.h>
 
-#define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002
+#define MULTIBOOT2_MAGIC  0x36d76289u   /* value GRUB puts in EAX */
 
-struct multiboot_mmap_entry {
-    uint32_t size;
-    uint32_t addr_low;
-    uint32_t addr_high;
-    uint32_t len_low;
-    uint32_t len_high;
-#define MULTIBOOT_MEMORY_AVAILABLE 1
-#define MULTIBOOT_MEMORY_RESERVED 2
-#define MULTIBOOT_MEMORY_ACPI_RECLAIMABLE 3
-#define MULTIBOOT_MEMORY_NVS 4
-#define MULTIBOOT_MEMORY_BADRAM 5
+/* ── Tag types ── */
+#define MB2_TAG_END          0
+#define MB2_TAG_CMDLINE      1
+#define MB2_TAG_LOADER_NAME  2
+#define MB2_TAG_MODULE       3
+#define MB2_TAG_BASIC_MEM    4
+#define MB2_TAG_BOOTDEV      5
+#define MB2_TAG_MMAP         6
+#define MB2_TAG_VBE          7
+#define MB2_TAG_FRAMEBUFFER  8
+#define MB2_TAG_ELF_SECTIONS 9
+#define MB2_TAG_APM          10
+
+/* ── Memory map entry types ── */
+#define MB2_MMAP_AVAILABLE   1
+#define MB2_MMAP_RESERVED    2
+#define MB2_MMAP_ACPI        3
+#define MB2_MMAP_NVS         4
+#define MB2_MMAP_BADRAM      5
+
+/* ── Generic tag header (all tags start with these 8 bytes) ── */
+struct mb2_tag {
     uint32_t type;
+    uint32_t size;
 } __attribute__((packed));
 
-struct multiboot_module {
-    uint32_t mod_start;
+/* ── Tag 3: Module (initrd) ── */
+struct mb2_tag_module {
+    uint32_t type;          /* 3 */
+    uint32_t size;
+    uint32_t mod_start;     /* physical address of module data */
     uint32_t mod_end;
-    uint32_t string;
-    uint32_t reserved;
+    char     cmdline[0];    /* null-terminated string */
 } __attribute__((packed));
 
-struct multiboot_info {
-    uint32_t flags;
-    uint32_t mem_lower;
-    uint32_t mem_upper;
-    uint32_t boot_device;
-    uint32_t cmdline;
-    uint32_t mods_count;
-    uint32_t mods_addr;
-    uint32_t syms[4];
-    uint32_t mmap_length;
-    uint32_t mmap_addr;
-    uint32_t drives_length;
-    uint32_t drives_addr;
-    uint32_t config_table;
-    uint32_t boot_loader_name;
-    uint32_t apm_table;
-    uint32_t vbe_control_info;
-    uint32_t vbe_mode_info;
-    uint16_t vbe_mode;
-    uint16_t vbe_interface_seg;
-    uint16_t vbe_interface_off;
-    uint16_t vbe_interface_len;
+/* ── Tag 6: Memory map ── */
+struct mb2_tag_mmap {
+    uint32_t type;          /* 6 */
+    uint32_t size;
+    uint32_t entry_size;    /* size of each entry (usually 24) */
+    uint32_t entry_version; /* 0 */
+    /* entries follow immediately */
+} __attribute__((packed));
 
-    uint64_t framebuffer_addr;
-    uint32_t framebuffer_pitch;
+struct mb2_mmap_entry {
+    uint64_t addr;
+    uint64_t len;
+    uint32_t type;          /* 1 = available RAM */
+    uint32_t zero;          /* reserved */
+} __attribute__((packed));
+
+/* ── Tag 8: Framebuffer (GOP on UEFI, VBE on BIOS) ── */
+struct mb2_tag_framebuffer {
+    uint32_t type;              /* 8 */
+    uint32_t size;
+    uint64_t framebuffer_addr;  /* linear framebuffer physical base address */
+    uint32_t framebuffer_pitch; /* bytes per scanline */
     uint32_t framebuffer_width;
     uint32_t framebuffer_height;
-    uint8_t framebuffer_bpp;
-#define MULTIBOOT_FRAMEBUFFER_TYPE_INDEXED 0
-#define MULTIBOOT_FRAMEBUFFER_TYPE_RGB     1
-#define MULTIBOOT_FRAMEBUFFER_TYPE_EGA_TEXT 2
-    uint8_t framebuffer_type;
-    union {
-        struct {
-            uint32_t framebuffer_palette_addr;
-            uint16_t framebuffer_palette_num_colors;
-        } palette;
-        struct {
-            uint8_t framebuffer_red_field_position;
-            uint8_t framebuffer_red_mask_size;
-            uint8_t framebuffer_green_field_position;
-            uint8_t framebuffer_green_mask_size;
-            uint8_t framebuffer_blue_field_position;
-            uint8_t framebuffer_blue_mask_size;
-        } rgb;
-    } color_info;
+    uint8_t  framebuffer_bpp;   /* bits per pixel (32 for RGB) */
+    uint8_t  framebuffer_type;  /* 1 = RGB direct color */
+    uint16_t reserved;
 } __attribute__((packed));
 
-#endif
+/* ── Multiboot2 info structure ── */
+struct mb2_info {
+    uint32_t total_size;
+    uint32_t reserved;
+    /* variable-length tag list follows — iterate with mb2_first_tag() */
+} __attribute__((packed));
+
+/* ── Tag iteration helpers ── */
+static inline struct mb2_tag* mb2_first_tag(struct mb2_info* info) {
+    return (struct mb2_tag*)((uint8_t*)info + 8);
+}
+
+static inline struct mb2_tag* mb2_next_tag(struct mb2_tag* tag) {
+    /* each tag is 8-byte aligned */
+    uint32_t addr = (uint32_t)tag + tag->size;
+    addr = (addr + 7) & ~7u;
+    return (struct mb2_tag*)addr;
+}
+
+#endif /* MULTIBOOT_H */

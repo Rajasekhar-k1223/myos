@@ -3,20 +3,26 @@
 #include "string.h"
 
 static uint32_t* fb = 0;
-uint32_t vesa_width = 0;
+uint32_t vesa_width  = 0;
 uint32_t vesa_height = 0;
 static uint32_t fb_pitch = 0;
 
 static uint32_t* backbuffer = 0;
 static int double_buffer_enabled = 0;
 
-void vesa_init(struct multiboot_info* mbi) {
-    if (mbi->flags & (1 << 12)) {
-        fb = (uint32_t*)(uint32_t)mbi->framebuffer_addr;
-        vesa_width = mbi->framebuffer_width;
-        vesa_height = mbi->framebuffer_height;
-        fb_pitch = mbi->framebuffer_pitch;
-    }
+/*
+ * Initialise from Multiboot2 framebuffer tag parameters.
+ * On UEFI:  addr is the GOP linear framebuffer base.
+ * On BIOS:  addr is the VBE linear framebuffer base.
+ * Both look identical to the kernel — same linear pixel array.
+ */
+void vesa_init(uint32_t addr, uint32_t width, uint32_t height,
+               uint32_t pitch, uint8_t bpp) {
+    (void)bpp; /* assume 32bpp — enforced by MB2 header request tag */
+    fb          = (uint32_t*)addr;
+    vesa_width  = width;
+    vesa_height = height;
+    fb_pitch    = pitch;
 }
 
 void vesa_init_backbuffer(void) {
