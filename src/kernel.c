@@ -21,6 +21,7 @@
 #include "vesa.h"
 #include "wm.h"
 #include "ata.h"
+#include "fs.h"
 
 window_t* shell_window = 0;
 

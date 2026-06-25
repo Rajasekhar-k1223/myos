@@ -8,6 +8,7 @@
 #include "task.h"
 #include "io.h"
 #include "ata.h"
+#include "fs.h"
 
 /* ── Buffer / state ──────────────────────────────────────────────────────── */
 #define BUF_SIZE      256
@@ -315,6 +316,39 @@ static void execute(void) {
         strcpy((char*)buf, text);
         ata_write_sector(lba, buf);
         terminal_printf("  Wrote to sector %d!\n", lba);
+    }
+    else if (strcmp(cmd, "lsfs") == 0) {
+        fs_file_info_t files[20];
+        int num = fs_list_files(files);
+        terminal_printf("  %d files found:\n", num);
+        for (int i = 0; i < num; i++) {
+            terminal_printf("    %s (%d bytes)\n", files[i].name, files[i].size);
+        }
+    }
+    else if (strncmp(cmd, "catfs ", 6) == 0) {
+        char buf[512];
+        if (fs_read_file(cmd + 6, buf) == 0) {
+            terminal_printf("  %s\n", buf);
+        } else {
+            terminal_printf("  File not found.\n");
+        }
+    }
+    else if (strncmp(cmd, "mkfile ", 7) == 0) {
+        char name[16] = {0};
+        char* p = cmd + 7;
+        int i = 0;
+        while (*p && *p != ' ' && i < 15) { name[i++] = *p++; }
+        while (*p == ' ') p++; // Skip spaces
+        
+        if (fs_write_file(name, p) == 0) {
+            terminal_printf("  File '%s' created.\n", name);
+        } else {
+            terminal_printf("  Failed to create file.\n");
+        }
+    }
+    else if (strcmp(cmd, "formatfs") == 0) {
+        fs_format();
+        terminal_printf("  MyFS formatted successfully.\n");
     }
     else {
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
