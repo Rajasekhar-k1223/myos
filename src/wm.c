@@ -15,6 +15,7 @@
 #include "paint.h"
 #include "explorer.h"
 #include "speaker.h"
+#include "kheap.h"
 
 #define MAX_WINDOWS 10
 
@@ -34,9 +35,14 @@ static int num_icons = 0;
 static uint32_t* desktop_bg_buffer = 0;
 static window_t* focused_window = 0;
 
+// Window Dragging and Resizing State
 static int drag_win_idx = -1;
 static int drag_off_x = 0;
 static int drag_off_y = 0;
+
+static window_t* resizing_window = 0;
+static int resize_off_x = 0;
+static int resize_off_y = 0;
 
 static char clock_str[20] = "";
 static uint32_t last_clock_ticks = 0;
@@ -309,6 +315,9 @@ static void wm_render(void) {
                 }
             }
         }
+        
+        // Draw Resize Handle
+        vesa_draw_rect(w->x + w->w - 12, w->y + 20 + w->h - 12, 12, 12, current_theme.title_bg);
         
         // Blinking Cursor
         if (w == focused_window && (strncmp(w->title, "Notepad", 7) == 0 || strncmp(w->title, "Terminal", 8) == 0 || strncmp(w->title, "Calculator", 10) == 0)) {
@@ -588,6 +597,16 @@ void wm_process_events(void) {
                             redraw_needed = 1;
                             break;
                         }
+                        
+                        // Check if click is inside the Resize Handle
+                        if (mx >= (int)(w->x + w->w - 12) && mx <= (int)(w->x + w->w) &&
+                            my >= (int)(w->y + 20 + w->h - 12) && my <= (int)(w->y + 20 + w->h)) {
+                            resizing_window = w;
+                            resize_off_x = mx - w->w;
+                            resize_off_y = my - w->h;
+                            clicked_on_something = 1;
+                            break;
+                        }
                     
                     // Check if click is inside the title bar (for dragging)
                     if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
@@ -698,6 +717,49 @@ void wm_process_events(void) {
         }
     }
     
+    // Process Window Dragging
+    if (left_click_held && drag_win_idx != -1 && resizing_window == 0) {
+        int new_x = mx - drag_off_x;
+        windows[drag_win_idx].y = my - drag_off_y;
+        redraw_needed = 1;
+    }
+    
+    // Process Window Resizing
+    if (left_click_held && resizing_window != 0) {
+        int new_w = mx - resize_off_x;
+        int new_h = my - resize_off_y;
+        
+        if (new_w < 150) new_w = 150;
+        if (new_h < 100) new_h = 100;
+        if (new_w > (int)vesa_width) new_w = vesa_width;
+        if (new_h > (int)vesa_height - 50) new_h = vesa_height - 50;
+        
+        if ((uint32_t)new_w != resizing_window->w || (uint32_t)new_h != resizing_window->h) {
+            uint32_t* new_buf = (uint32_t*)kmalloc(new_w * new_h * 4);
+            if (new_buf) {
+                for (int yy = 0; yy < new_h; yy++) {
+                    for (int xx = 0; xx < new_w; xx++) {
+                        if (xx < (int)resizing_window->w && yy < (int)resizing_window->h) {
+                            new_buf[yy * new_w + xx] = resizing_window->buffer[yy * resizing_window->w + xx];
+                        } else {
+                            new_buf[yy * new_w + xx] = resizing_window->bg_color;
+                        }
+                    }
+                }
+                kfree(resizing_window->buffer);
+                resizing_window->buffer = new_buf;
+                resizing_window->w = new_w;
+                resizing_window->h = new_h;
+                redraw_needed = 1;
+            }
+        }
+    }
+
+    if (!left_click_held) {
+        drag_win_idx = -1;
+        resizing_window = 0;
+    }
+
     last_btns = btns;
 
     // Force redraw for blinking cursor if focused window is text-based
