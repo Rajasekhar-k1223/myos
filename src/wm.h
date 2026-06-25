@@ -11,6 +11,9 @@ typedef struct {
     uint32_t bg_color;
     uint32_t fg_color;
     uint8_t alpha;
+    /* Text buffer — non-NULL for Notepad windows; tracks raw typed text */
+    char*    text_buf;
+    uint32_t text_len;
 } window_t;
 
 typedef struct {

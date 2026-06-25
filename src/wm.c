@@ -4,6 +4,7 @@
 #include "kheap.h"
 #include "string.h"
 #include "font16.h"
+#include "fat16.h"
 #include "rtc.h"
 #include "pit.h"
 #include "io.h"
@@ -16,6 +17,7 @@
 #include "explorer.h"
 #include "speaker.h"
 #include "kheap.h"
+#include "minesweeper.h"
 
 #define MAX_WINDOWS 10
 
@@ -152,10 +154,12 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
     win->active = 1;
     win->cursor_x = 0;
     win->cursor_y = 0;
-    win->fg_color = 0xAAAAAA; // Default Light Gray Text
-    win->bg_color = 0x000000; // Default Black Background
+    win->fg_color = 0xAAAAAA;
+    win->bg_color = 0x000000;
     win->alpha = (strncmp(title, "Terminal", 8) == 0) ? 210 : 255;
-    
+    win->text_buf = NULL;
+    win->text_len = 0;
+
     focused_window = win;
     
     win->buffer = (uint32_t*)kmalloc(w * h * 4);
@@ -213,6 +217,34 @@ void wm_set_wallpaper(const char* filename) {
     wm_request_redraw();
 }
 
+static window_t* wm_notepad_open(const char* title, uint32_t x, uint32_t y) {
+    window_t* win = wm_create_window(x, y, 600, 400, title);
+    if (!win) return NULL;
+    win->text_buf = (char*)kmalloc(8192);
+    win->text_len = 0;
+    win->text_buf[0] = '\0';
+    win->fg_color = 0xE0E0E0;
+    win->bg_color = 0x1A1A2E;
+    for (uint32_t i = 0; i < win->w * win->h; i++)
+        win->buffer[i] = win->bg_color;
+    return win;
+}
+
+static void wm_notepad_reload(window_t* win, const uint8_t* data, uint32_t len) {
+    /* Clear pixel buffer */
+    for (uint32_t i = 0; i < win->w * win->h; i++)
+        win->buffer[i] = win->bg_color;
+    win->cursor_x = 0;
+    win->cursor_y = 0;
+    /* Temporarily disable text_buf tracking so we don't double-record */
+    char* saved_buf  = win->text_buf;
+    uint32_t saved_len = win->text_len;
+    win->text_buf = NULL;
+    for (uint32_t i = 0; i < len; i++) wm_putchar(win, (char)data[i]);
+    win->text_buf = saved_buf;
+    win->text_len = saved_len;
+}
+
 int wm_handle_shortcut(char key) {
     extern window_t* shell_window;
     if (key == 't' || key == 'T') {
@@ -226,6 +258,40 @@ int wm_handle_shortcut(char key) {
         redraw_needed = 1;
         return 1;
     }
+    if (key == 'n' || key == 'N') {
+        wm_notepad_open("Notepad", 120, 80);
+        redraw_needed = 1;
+        return 1;
+    }
+    if (key == 's' || key == 'S') {
+        /* Save focused text-buffered window to FAT16 */
+        if (focused_window && focused_window->text_buf) {
+            /* Extract filename from title "Notepad - foo.txt" or use "notes.txt" */
+            const char* fname = "notes.txt";
+            const char* dash = strstr(focused_window->title, " - ");
+            if (dash) fname = dash + 3;
+            fat16_write_file(fname,
+                             (const uint8_t*)focused_window->text_buf,
+                             focused_window->text_len);
+            speaker_beep(880, 80);
+        }
+        return 1;
+    }
+    if (key == 'o' || key == 'O') {
+        /* Load "notes.txt" from FAT16 into a new Notepad */
+        static uint8_t load_buf[8192];
+        int r = fat16_read_file("notes.txt", load_buf, sizeof(load_buf));
+        if (r > 0) {
+            window_t* np = wm_notepad_open("Notepad - notes.txt", 130, 90);
+            if (np) {
+                np->text_len = (uint32_t)r;
+                memcpy(np->text_buf, load_buf, (uint32_t)r + 1);
+                wm_notepad_reload(np, load_buf, (uint32_t)r);
+            }
+        }
+        redraw_needed = 1;
+        return 1;
+    }
     if (key == 'w' || key == 'W') {
         if (focused_window) {
             focused_window->active = 0;
@@ -236,12 +302,28 @@ int wm_handle_shortcut(char key) {
         }
         return 1;
     }
+    if (key == 'm' || key == 'M') {
+        window_t* ms_win = wm_create_window(150, 150, 220, 240, "Minesweeper");
+        minesweeper_init(ms_win);
+        redraw_needed = 1;
+        return 1;
+    }
     return 0;
 }
 
 void wm_putchar(window_t* win, char c) {
     if (!win || !win->buffer) return;
-    
+
+    /* Maintain raw text buffer for Notepad save/load */
+    if (win->text_buf) {
+        if (c == '\b') {
+            if (win->text_len > 0) win->text_buf[--win->text_len] = '\0';
+        } else if (c != '\r' && win->text_len < 8190) {
+            win->text_buf[win->text_len++] = c;
+            win->text_buf[win->text_len]   = '\0';
+        }
+    }
+
     if (c == '\n') {
         win->cursor_x = 0;
         win->cursor_y += 16;
@@ -348,7 +430,7 @@ static void wm_render(void) {
     wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
     
     // Bottom Dock (Modern floating launcher)
-    int dock_w = 620; // Expanded for Explorer
+    int dock_w = 680; // Expanded for Notepad
     int dock_h = 50;
     int dock_x = (vesa_width - dock_w) / 2;
     int dock_y = vesa_height - dock_h - 10;
@@ -387,6 +469,9 @@ static void wm_render(void) {
     // Explorer
     vesa_draw_rect(dock_x + 550, dock_y + 5, 40, 40, 0xDAA520);
     wm_draw_string(dock_x + 555, dock_y + 20, "Files", 0xFFFFFF);
+    // Notepad
+    vesa_draw_rect(dock_x + 610, dock_y + 5, 40, 40, 0x1A1A2E);
+    wm_draw_string(dock_x + 615, dock_y + 20, "Note", 0xE0E0E0);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
@@ -565,6 +650,9 @@ void wm_process_events(void) {
                     // Explorer
                     window_t* exp_win = wm_create_window(100, 100, 400, 300, "File Explorer");
                     explorer_init(exp_win);
+                } else if (mx >= dock_x + 610 && mx <= dock_x + 650) {
+                    // Notepad
+                    wm_notepad_open("Notepad", 120, 80);
                 }
             }
         }
@@ -668,6 +756,15 @@ void wm_process_events(void) {
                         break;
                     }
                     
+                    // Check if click is inside Minesweeper
+                    if (strcmp(w->title, "Minesweeper") == 0 &&
+                        mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                        my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        minesweeper_handle_click(w, mx, my, 0);
+                        clicked_on_something = 1;
+                        break;
+                    }
+                    
                     // Check if click is inside Paint
                     if (strcmp(w->title, "Paint") == 0 &&
                         mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
@@ -724,6 +821,25 @@ void wm_process_events(void) {
         }
     }
     
+    int right_click_just_pressed = (btns & 2) && !(last_btns & 2);
+    if (right_click_just_pressed) {
+        if (!start_menu_open) {
+            for (int i = num_windows - 1; i >= 0; i--) {
+                window_t* w = &windows[i];
+                if (w->active) {
+                    if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                        my >= (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        focused_window = w;
+                        if (strcmp(w->title, "Minesweeper") == 0) {
+                            minesweeper_handle_click(w, mx, my, 1);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // Process Window Dragging
     if (left_click_held && drag_win_idx != -1 && resizing_window == 0) {
         windows[drag_win_idx].x = mx - drag_off_x;
