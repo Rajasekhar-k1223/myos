@@ -212,6 +212,7 @@ static void wm_render(void) {
         // Menu Items
         wm_draw_string(m_x + 35, m_y + 20, "New Terminal", 0x000000);
         wm_draw_string(m_x + 35, m_y + 45, "New Window", 0x000000);
+        wm_draw_string(m_x + 35, m_y + 70, "Image Viewer", 0x000000);
         
         vesa_draw_rect(m_x + 35, m_y + 160, m_w - 45, 1, 0x808080); // Separator
         
@@ -275,6 +276,13 @@ void wm_process_events(void) {
             } else if (my >= (int)(m_y + 40) && my <= (int)(m_y + 60)) {
                 // New Window
                 wm_create_window(200, 200, 300, 200, "Window");
+                start_menu_open = 0;
+                redraw_needed = 1;
+            } else if (my >= (int)(m_y + 65) && my <= (int)(m_y + 85)) {
+                // Image Viewer
+                window_t* img_win = wm_create_window(250, 150, 500, 400, "Image Viewer - logo.bmp");
+                extern void bmp_load_to_window(const char* filename, window_t* win);
+                bmp_load_to_window("logo.bmp", img_win);
                 start_menu_open = 0;
                 redraw_needed = 1;
             } else if (my >= (int)(m_y + 170) && my <= (int)(m_y + 190)) {
