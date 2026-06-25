@@ -14,7 +14,7 @@ void paging_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
         // Page table not present, allocate one
         uint32_t* pt = (uint32_t*)pmm_alloc_frame();
         memset(pt, 0, 4096);
-        page_directory[pdindex] = (uint32_t)pt | 3; // Present, Read/Write
+        page_directory[pdindex] = (uint32_t)pt | 7; // Present, Read/Write, User
     }
 
     uint32_t* pt = (uint32_t*)(page_directory[pdindex] & ~0xFFF);
@@ -27,7 +27,7 @@ void paging_init(void) {
 
     // Identity map the first 16MB of memory
     for (uint32_t i = 0; i < 0x1000000; i += 4096) {
-        paging_map_page(i, i, 3); // 3 = Present + Read/Write
+        paging_map_page(i, i, 7); // 7 = Present + Read/Write + User
     }
 
     // Assembly function to set CR3 and enable CR0 paging bit
