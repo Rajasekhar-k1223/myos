@@ -1,0 +1,12 @@
+#pragma once
+#include <stdint.h>
+#include "multiboot.h"
+
+extern uint32_t vesa_width;
+extern uint32_t vesa_height;
+
+void vesa_init(struct multiboot_info* mbi);
+void vesa_putpixel(uint32_t x, uint32_t y, uint32_t color);
+void vesa_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
+void vesa_clear(uint32_t color);
+void vesa_scroll(void);

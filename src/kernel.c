@@ -17,41 +17,34 @@
 #include "shell.h"
 #include "io.h"
 
-/* ── VGA constants ───────────────────────────────────────────────────────── */
-#define VGA_WIDTH  80
-#define VGA_HEIGHT 25
-#define VGA_CTRL   0x3D4
-#define VGA_DATA   0x3D5
+/* ── VESA Terminal Driver ────────────────────────────────────────────────── */
+#include "font.h"
+#include "vesa.h"
+
+// Convert old VGA colors to VESA 32-bit colors
+static const uint32_t vesa_palette[16] = {
+    0x000000, 0x0000AA, 0x00AA00, 0x00AAAA,
+    0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA,
+    0x555555, 0x5555FF, 0x55FF55, 0x55FFFF,
+    0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
+};
+
+static uint32_t  term_row;
+static uint32_t  term_col;
+static uint8_t   term_color;
 
 static inline uint16_t vga_entry(unsigned char c, uint8_t color) {
     return (uint16_t)c | (uint16_t)color << 8;
 }
 
-static uint32_t  term_row;
-static uint32_t  term_col;
-static uint8_t   term_color;
-static uint16_t* term_buf;
-
-/* ── Hardware cursor ─────────────────────────────────────────────────────── */
-static void hw_cursor_update(void) {
-    uint16_t pos = (uint16_t)(term_row * VGA_WIDTH + term_col);
-    outb(VGA_CTRL, 0x0F); outb(VGA_DATA, (uint8_t)(pos & 0xFF));
-    outb(VGA_CTRL, 0x0E); outb(VGA_DATA, (uint8_t)(pos >> 8));
-}
-
 void terminal_cursor_show(int visible) {
-    if (visible) {
-        outb(VGA_CTRL, 0x0A); outb(VGA_DATA, (inb(VGA_DATA) & 0xC0) | 13);
-        outb(VGA_CTRL, 0x0B); outb(VGA_DATA, (inb(VGA_DATA) & 0xE0) | 15);
-    } else {
-        outb(VGA_CTRL, 0x0A); outb(VGA_DATA, 0x20); /* bit 5 = disable */
-    }
+    (void)visible;
+    // Hardware cursor is not available in VESA mode. We would need to draw a block manually.
 }
 
 void terminal_setpos(uint32_t row, uint32_t col) {
-    if (row < VGA_HEIGHT) term_row = row;
-    if (col < VGA_WIDTH)  term_col = col;
-    hw_cursor_update();
+    term_row = row;
+    term_col = col;
 }
 
 void terminal_getpos(uint32_t* row, uint32_t* col) {
@@ -59,32 +52,21 @@ void terminal_getpos(uint32_t* row, uint32_t* col) {
     if (col) *col = term_col;
 }
 
-/* ── Scroll ──────────────────────────────────────────────────────────────── */
 static void terminal_scroll(void) {
-    for (uint32_t y = 0; y < VGA_HEIGHT - 1; y++)
-        for (uint32_t x = 0; x < VGA_WIDTH; x++)
-            term_buf[y * VGA_WIDTH + x] = term_buf[(y+1) * VGA_WIDTH + x];
-    for (uint32_t x = 0; x < VGA_WIDTH; x++)
-        term_buf[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = vga_entry(' ', term_color);
-    term_row = VGA_HEIGHT - 1;
+    vesa_scroll();
+    term_row--;
 }
 
-/* ── Core terminal API ───────────────────────────────────────────────────── */
 void terminal_initialize(void) {
     term_row   = 0;
     term_col   = 0;
     term_color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-    term_buf   = (uint16_t*)0xB8000;
     terminal_clear();
-    terminal_cursor_show(1);
 }
 
 void terminal_clear(void) {
-    for (uint32_t y = 0; y < VGA_HEIGHT; y++)
-        for (uint32_t x = 0; x < VGA_WIDTH; x++)
-            term_buf[y * VGA_WIDTH + x] = vga_entry(' ', term_color);
+    vesa_clear(vesa_palette[term_color >> 4]);
     term_row = 0; term_col = 0;
-    hw_cursor_update();
 }
 
 void terminal_setcolor(uint8_t color) {
@@ -92,30 +74,49 @@ void terminal_setcolor(uint8_t color) {
 }
 
 static void putentryat(char c, uint8_t color, uint32_t x, uint32_t y) {
-    term_buf[y * VGA_WIDTH + x] = vga_entry(c, color);
+    uint32_t bg = vesa_palette[color >> 4];
+    uint32_t fg = vesa_palette[color & 0x0F];
+    
+    // Safety check for ASCII bounds
+    if ((unsigned char)c > 127) c = '?';
+    
+    const unsigned char* glyph = font8x8[(unsigned char)c];
+    
+    for (uint32_t cy = 0; cy < 8; cy++) {
+        for (uint32_t cx = 0; cx < 8; cx++) {
+            if (glyph[cy] & (1 << (7 - cx))) {
+                vesa_putpixel(x * 8 + cx, y * 8 + cy, fg);
+            } else {
+                vesa_putpixel(x * 8 + cx, y * 8 + cy, bg);
+            }
+        }
+    }
 }
 
 void terminal_putchar(char c) {
+    uint32_t vesa_cols = vesa_width / 8;
+    uint32_t vesa_rows = vesa_height / 8;
+    if (vesa_cols == 0) return; // VESA not ready
+
     switch (c) {
     case '\n':
         term_col = 0;
-        if (++term_row == VGA_HEIGHT) terminal_scroll();
+        if (++term_row >= vesa_rows) terminal_scroll();
         break;
     case '\r':
         term_col = 0;
         break;
     case '\t':
         term_col = (term_col + 8) & ~(uint32_t)7;
-        if (term_col >= VGA_WIDTH) { term_col = 0; if (++term_row == VGA_HEIGHT) terminal_scroll(); }
+        if (term_col >= vesa_cols) { term_col = 0; if (++term_row >= vesa_rows) terminal_scroll(); }
         break;
     case '\b':
         if (term_col > 0) { --term_col; putentryat(' ', term_color, term_col, term_row); }
         break;
     default:
         putentryat(c, term_color, term_col, term_row);
-        if (++term_col == VGA_WIDTH) { term_col = 0; if (++term_row == VGA_HEIGHT) terminal_scroll(); }
+        if (++term_col >= vesa_cols) { term_col = 0; if (++term_row >= vesa_rows) terminal_scroll(); }
     }
-    hw_cursor_update();
 }
 
 void terminal_write(const char* data, size_t size) {
@@ -198,6 +199,11 @@ static void boot_section(const char* title) {
 
 /* ── kernel_main ─────────────────────────────────────────────────────────── */
 void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
+    if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
+        for (;;) __asm__ volatile("cli; hlt"); // Cannot even print without VESA
+    }
+
+    vesa_init(mbi);
     terminal_initialize();
 
     /* ── Header box ── */
@@ -254,12 +260,6 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
 
     /* ── Memory ── */
     boot_section("Memory Subsystem");
-
-    if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
-        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
-        terminal_writestring(BOX_V "  [FAIL]  Invalid Multiboot magic — halting.\n");
-        for (;;) __asm__ volatile("cli; hlt");
-    }
 
     pmm_init(mbi);
     {
