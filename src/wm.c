@@ -6,6 +6,7 @@
 #include "font.h"
 #include "rtc.h"
 #include "pit.h"
+#include "io.h"
 
 #define MAX_WINDOWS 10
 
@@ -19,6 +20,9 @@ static int drag_off_y = 0;
 
 static char clock_str[20] = "";
 static uint32_t last_clock_ticks = 0;
+
+static int start_menu_open = 0;
+static int start_btn_pressed = 0;
 
 static const uint32_t cursor_bitmap[15][10] = {
     {1,0,0,0,0,0,0,0,0,0},
@@ -168,8 +172,13 @@ static void wm_render(void) {
     
     // Start Button
     vesa_draw_rect(5, vesa_height - 25, 60, 20, 0x008000); // Green
-    vesa_draw_rect(5, vesa_height - 25, 60, 2, 0x00FF00); // Highlight
-    vesa_draw_rect(5, vesa_height - 25, 2, 20, 0x00FF00); // Highlight
+    if (start_btn_pressed) {
+        vesa_draw_rect(5, vesa_height - 25, 60, 2, 0x004000); // Pressed shadow
+        vesa_draw_rect(5, vesa_height - 25, 2, 20, 0x004000); 
+    } else {
+        vesa_draw_rect(5, vesa_height - 25, 60, 2, 0x00FF00); // Highlight
+        vesa_draw_rect(5, vesa_height - 25, 2, 20, 0x00FF00); 
+    }
     wm_draw_string(15, vesa_height - 19, "START", 0xFFFFFF);
     
     // Clock Box (Inset 3D)
@@ -180,7 +189,36 @@ static void wm_render(void) {
     vesa_draw_rect(vesa_width - 12, vesa_height - 25, 2, 20, 0xFFFFFF); // inner highlight right
     wm_draw_string(vesa_width - 150, vesa_height - 19, clock_str, 0x000000);
     
-    // 4. Draw Mouse
+    // 4. Draw Start Menu
+    if (start_menu_open) {
+        uint32_t m_w = 150;
+        uint32_t m_h = 200;
+        uint32_t m_x = 0;
+        uint32_t m_y = vesa_height - 30 - m_h;
+        
+        // Menu Background
+        vesa_draw_rect(m_x, m_y, m_w, m_h, 0xC0C0C0);
+        // 3D Borders
+        vesa_draw_rect(m_x, m_y, m_w, 2, 0xFFFFFF); // top
+        vesa_draw_rect(m_x, m_y, 2, m_h, 0xFFFFFF); // left
+        vesa_draw_rect(m_x + m_w - 2, m_y, 2, m_h, 0x808080); // right
+        vesa_draw_rect(m_x, m_y + m_h - 2, m_w, 2, 0x808080); // bottom
+        
+        // Side banner
+        vesa_draw_rect(m_x + 2, m_y + 2, 25, m_h - 4, 0x0000A0);
+        wm_draw_string(m_x + 6, m_y + m_h - 50, "my", 0xFFFFFF);
+        wm_draw_string(m_x + 6, m_y + m_h - 40, "OS", 0xFFFFFF);
+        
+        // Menu Items
+        wm_draw_string(m_x + 35, m_y + 20, "New Terminal", 0x000000);
+        wm_draw_string(m_x + 35, m_y + 45, "New Window", 0x000000);
+        
+        vesa_draw_rect(m_x + 35, m_y + 160, m_w - 45, 1, 0x808080); // Separator
+        
+        wm_draw_string(m_x + 35, m_y + 175, "Reboot", 0x000000);
+    }
+    
+    // 5. Draw Mouse
     int mx = mouse_get_x();
     int my = mouse_get_y();
     for (int y = 0; y < 15; y++) {
@@ -190,11 +228,13 @@ static void wm_render(void) {
         }
     }
     
-    // 5. Swap!
+    // 6. Swap!
     vesa_swap_buffers();
 }
 
 void wm_process_events(void) {
+    extern uint32_t vesa_height;
+    
     // 0. Update Clock
     uint32_t current_ticks = pit_get_ticks();
     if (current_ticks - last_clock_ticks >= 100 || clock_str[0] == '\0') {
@@ -209,29 +249,78 @@ void wm_process_events(void) {
     
     static uint8_t last_btns = 0;
     int left_click_just_pressed = (btns & 1) && !(last_btns & 1);
+    int left_click_just_released = !(btns & 1) && (last_btns & 1);
     int left_click_held = (btns & 1);
     
     if (left_click_just_pressed) {
-        // Iterate backwards (top-most first)
-        for (int i = num_windows - 1; i >= 0; i--) {
-            window_t* w = &windows[i];
-            if (w->active) {
-                // Check if click is inside the title bar
-                if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
-                    my >= (int)w->y && my <= (int)(w->y + 20)) {
-                    drag_win_idx = i;
-                    drag_off_x = mx - w->x;
-                    drag_off_y = my - w->y;
-                    break;
+        int clicked_on_something = 0;
+        
+        // Check Start Button click
+        if (mx >= 5 && mx <= 65 && my >= (int)(vesa_height - 25) && my <= (int)(vesa_height - 5)) {
+            start_btn_pressed = 1;
+            clicked_on_something = 1;
+            redraw_needed = 1;
+        } 
+        // Check Start Menu items click
+        else if (start_menu_open && mx >= 0 && mx <= 150 && my >= (int)(vesa_height - 30 - 200) && my <= (int)(vesa_height - 30)) {
+            clicked_on_something = 1;
+            uint32_t m_y = vesa_height - 30 - 200;
+            
+            if (my >= (int)(m_y + 15) && my <= (int)(m_y + 35)) {
+                // New Terminal
+                extern window_t* shell_window;
+                shell_window = wm_create_window(50, 50, 600, 400, "Terminal");
+                start_menu_open = 0;
+                redraw_needed = 1;
+            } else if (my >= (int)(m_y + 40) && my <= (int)(m_y + 60)) {
+                // New Window
+                wm_create_window(200, 200, 300, 200, "Window");
+                start_menu_open = 0;
+                redraw_needed = 1;
+            } else if (my >= (int)(m_y + 170) && my <= (int)(m_y + 190)) {
+                // Reboot
+                outb(0x64, 0xFE);
+                for (;;) __asm__ volatile("hlt");
+            }
+        }
+        
+        // Check Windows (Iterate backwards / top-most first)
+        if (!clicked_on_something && !start_menu_open) {
+            for (int i = num_windows - 1; i >= 0; i--) {
+                window_t* w = &windows[i];
+                if (w->active) {
+                    if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                        my >= (int)w->y && my <= (int)(w->y + 20)) {
+                        drag_win_idx = i;
+                        drag_off_x = mx - w->x;
+                        drag_off_y = my - w->y;
+                        clicked_on_something = 1;
+                        break;
+                    }
                 }
             }
         }
+        
+        // Close menu if clicked outside
+        if (!clicked_on_something && start_menu_open) {
+            start_menu_open = 0;
+            redraw_needed = 1;
+        }
+        
+    } else if (left_click_just_released) {
+        if (start_btn_pressed) {
+            start_btn_pressed = 0;
+            // Check if we released while still over the button
+            if (mx >= 5 && mx <= 65 && my >= (int)(vesa_height - 25) && my <= (int)(vesa_height - 5)) {
+                start_menu_open = !start_menu_open;
+            }
+            redraw_needed = 1;
+        }
+        drag_win_idx = -1;
     } else if (left_click_held && drag_win_idx >= 0) {
         windows[drag_win_idx].x = mx - drag_off_x;
         windows[drag_win_idx].y = my - drag_off_y;
         redraw_needed = 1;
-    } else if (!left_click_held) {
-        drag_win_idx = -1;
     }
     
     last_btns = btns;
