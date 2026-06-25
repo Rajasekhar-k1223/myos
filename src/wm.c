@@ -10,6 +10,7 @@
 #include "tar.h"
 #include "snake.h"
 #include "calc.h"
+#include "clock.h"
 
 #define MAX_WINDOWS 10
 
@@ -296,7 +297,7 @@ static void wm_render(void) {
     wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
     
     // Bottom Dock (Modern floating launcher)
-    int dock_w = 380; // Expanded for Calc
+    int dock_w = 440; // Expanded for Clock
     int dock_h = 50;
     int dock_x = (vesa_width - dock_w) / 2;
     int dock_y = vesa_height - dock_h - 10;
@@ -323,6 +324,9 @@ static void wm_render(void) {
     // Calculator
     vesa_draw_rect(dock_x + 310, dock_y + 5, 40, 40, 0x008080);
     wm_draw_string(dock_x + 315, dock_y + 20, "Calc", 0xFFFFFF);
+    // Clock
+    vesa_draw_rect(dock_x + 370, dock_y + 5, 40, 40, 0x000000);
+    wm_draw_string(dock_x + 375, dock_y + 20, "Time", 0xFFFFFF);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
@@ -381,6 +385,13 @@ void wm_process_events(void) {
         rtc_datetime_str(clock_str);
         last_clock_ticks = current_ticks;
         redraw_needed = 1;
+        
+        // Update Analog Clocks
+        for (int i = 0; i < num_windows; i++) {
+            if (windows[i].active && strcmp(windows[i].title, "Analog Clock") == 0) {
+                clock_update(&windows[i]);
+            }
+        }
     }
 
     int mx = mouse_get_x();
@@ -433,7 +444,7 @@ void wm_process_events(void) {
         
         // Check Dock Clicks
         if (!clicked_on_something && !start_menu_open) {
-            int dock_w = 380;
+            int dock_w = 440;
             int dock_h = 50;
             int dock_x = (vesa_width - dock_w) / 2;
             int dock_y = vesa_height - dock_h - 10;
@@ -478,6 +489,10 @@ void wm_process_events(void) {
                     // Calculator
                     window_t* calc_win = wm_create_window(200, 200, 300, 250, "Calculator");
                     calc_init(calc_win);
+                } else if (mx >= dock_x + 370 && mx <= dock_x + 410) {
+                    // Clock
+                    window_t* clk_win = wm_create_window(300, 100, 250, 250, "Analog Clock");
+                    clock_init(clk_win);
                 }
             }
         }

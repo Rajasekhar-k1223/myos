@@ -6,7 +6,7 @@ LDFLAGS = -T src/linker.ld -nostdlib -no-pie -Wl,--build-id=none
 SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/string.c src/sprintf.c src/pmm.c src/paging.c \
          src/kheap.c src/pit.c src/rtc.c src/shell.c src/tar.c \
-         src/task.c src/tss.c src/syscall.c src/user.c src/vesa.c src/bmp.c src/mouse.c src/wm.c src/snake.c src/calc.c
+         src/task.c src/tss.c src/syscall.c src/user.c src/vesa.c src/bmp.c src/mouse.c src/wm.c src/snake.c src/calc.c src/clock.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 OBJS   = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
 
