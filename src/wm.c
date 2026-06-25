@@ -18,6 +18,7 @@
 #include "speaker.h"
 #include "kheap.h"
 #include "minesweeper.h"
+#include "settings.h"
 
 #define MAX_WINDOWS 10
 
@@ -305,6 +306,12 @@ int wm_handle_shortcut(char key) {
     if (key == 'm' || key == 'M') {
         window_t* ms_win = wm_create_window(150, 150, 220, 240, "Minesweeper");
         minesweeper_init(ms_win);
+        redraw_needed = 1;
+        return 1;
+    }
+    if (key == 's' || key == 'S') {
+        window_t* set_win = wm_create_window(200, 200, 300, 250, "Theme Settings");
+        settings_init(set_win);
         redraw_needed = 1;
         return 1;
     }
@@ -761,6 +768,15 @@ void wm_process_events(void) {
                         mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
                         my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
                         minesweeper_handle_click(w, mx, my, 0);
+                        clicked_on_something = 1;
+                        break;
+                    }
+                    
+                    // Check if click is inside Theme Settings
+                    if (strcmp(w->title, "Theme Settings") == 0 &&
+                        mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                        my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        settings_handle_click(w, mx, my);
                         clicked_on_something = 1;
                         break;
                     }

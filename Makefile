@@ -10,7 +10,7 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/vesa.c src/bmp.c src/mouse.c src/wm.c \
          src/snake.c src/calc.c src/clock.c src/wallpaper.c \
          src/paint.c src/ata.c src/fs.c src/fat16.c src/explorer.c src/speaker.c \
-         src/minesweeper.c
+         src/minesweeper.c src/settings.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
