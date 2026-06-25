@@ -674,6 +674,11 @@ static void wm_render(void) {
         if (!w->active || w->minimized) continue;
         if (w->desktop_id != current_desktop) continue;
 
+        // Drop Shadow (8px offset)
+        if (w->alpha == 255) { // Only draw shadow for fully opaque windows (e.g. not Terminal)
+            vesa_draw_rect_alpha(w->x + 6, w->y + 6, w->w + 2, w->h + 22, 0x000000, 80);
+        }
+
         // Window Border (1px flat)
         vesa_draw_rect_alpha(w->x - 1, w->y - 1, w->w + 2, w->h + 22, current_theme.window_border, w->alpha);
         // Window Title bar (20px high)
