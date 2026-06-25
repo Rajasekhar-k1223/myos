@@ -124,3 +124,33 @@ void* tar_get_file(const char* filename, size_t* out_size) {
 
     return NULL;
 }
+
+int tar_get_file_at_index(int index, char* out_name) {
+    if (!tar_address) return 0;
+
+    uint32_t current_address = tar_address;
+    int current_idx = 0;
+    
+    while (1) {
+        tar_header_t* header = (tar_header_t*)current_address;
+        if (header->name[0] == '\0') break;
+
+        uint32_t size = parse_octal(header->size, 11);
+        
+        if (header->typeflag == '0' || header->typeflag == '\0') {
+            if (current_idx == index) {
+                if (out_name) {
+                    strncpy(out_name, header->name, 99);
+                    out_name[99] = '\0';
+                }
+                return 1;
+            }
+            current_idx++;
+        }
+        
+        uint32_t data_blocks = (size + 511) / 512;
+        current_address += 512 + (data_blocks * 512);
+    }
+
+    return 0;
+}

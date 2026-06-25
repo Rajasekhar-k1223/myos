@@ -7,6 +7,7 @@
 #include "rtc.h"
 #include "pit.h"
 #include "io.h"
+#include "tar.h"
 
 #define MAX_WINDOWS 10
 
@@ -219,6 +220,7 @@ static void wm_render(void) {
         wm_draw_string(m_x + 35, m_y + 20, "New Terminal", 0x000000);
         wm_draw_string(m_x + 35, m_y + 45, "New Window", 0x000000);
         wm_draw_string(m_x + 35, m_y + 70, "Image Viewer", 0x000000);
+        wm_draw_string(m_x + 35, m_y + 95, "File Explorer", 0x000000);
         
         vesa_draw_rect(m_x + 35, m_y + 160, m_w - 45, 1, 0x808080); // Separator
         
@@ -291,6 +293,16 @@ void wm_process_events(void) {
                 bmp_load_to_window("logo.bmp", img_win);
                 start_menu_open = 0;
                 redraw_needed = 1;
+            } else if (my >= (int)(m_y + 90) && my <= (int)(m_y + 110)) {
+                // File Explorer
+                window_t* fe_win = wm_create_window(100, 100, 400, 300, "File Explorer");
+                char name[100];
+                for (int i = 0; tar_get_file_at_index(i, name); i++) {
+                    for(int j = 0; name[j]; j++) wm_putchar(fe_win, name[j]);
+                    wm_putchar(fe_win, '\n');
+                }
+                start_menu_open = 0;
+                redraw_needed = 1;
             } else if (my >= (int)(m_y + 170) && my <= (int)(m_y + 190)) {
                 // Reboot
                 outb(0x64, 0xFE);
@@ -322,6 +334,40 @@ void wm_process_events(void) {
                         drag_win_idx = i;
                         drag_off_x = mx - w->x;
                         drag_off_y = my - w->y;
+                        clicked_on_something = 1;
+                        break;
+                    }
+                    
+                    // Check if click is inside the File Explorer content
+                    if (strcmp(w->title, "File Explorer") == 0 &&
+                        mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                        my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        
+                        int clicked_row = (my - (w->y + 20)) / 8;
+                        char name[100];
+                        if (tar_get_file_at_index(clicked_row, name)) {
+                            int len = strlen(name);
+                            if (len >= 4 && strcmp(&name[len-4], ".bmp") == 0) {
+                                char title[100];
+                                strcpy(title, "Image Viewer - ");
+                                strncat(title, name, 63);
+                                window_t* img_win = wm_create_window(250, 150, 500, 400, title);
+                                extern void bmp_load_to_window(const char*, window_t*);
+                                bmp_load_to_window(name, img_win);
+                            } else if (len >= 4 && strcmp(&name[len-4], ".txt") == 0) {
+                                char title[100];
+                                strcpy(title, "Notepad - ");
+                                strncat(title, name, 63);
+                                window_t* txt_win = wm_create_window(200, 200, 400, 300, title);
+                                size_t file_size;
+                                char* data = (char*)tar_get_file(name, &file_size);
+                                if (data) {
+                                    for(size_t j=0; j<file_size; j++) {
+                                        wm_putchar(txt_win, data[j]);
+                                    }
+                                }
+                            }
+                        }
                         clicked_on_something = 1;
                         break;
                     }
