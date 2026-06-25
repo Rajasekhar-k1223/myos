@@ -16,7 +16,7 @@ src/%.o: src/%.S
 	$(AS) -c $< -o $@
 
 myos.bin: $(OBJS)
-	$(CC) $(LDFLAGS) $(OBJS) -o myos.bin -lgcc
+	$(CC) $(LDFLAGS) src/boot.o $(filter-out src/boot.o, $(OBJS)) -o myos.bin -lgcc
 
 myos.iso: myos.bin
 	mkdir -p isodir/boot/grub
