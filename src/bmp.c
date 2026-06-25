@@ -100,3 +100,39 @@ void bmp_load_to_window(const char* filename, window_t* win) {
         }
     }
 }
+
+void bmp_load_to_buffer(const char* filename, uint32_t* buffer, int buf_w, int buf_h, int offset_x, int offset_y) {
+    if (!buffer) return;
+
+    size_t file_size;
+    const uint8_t* data = (const uint8_t*)tar_get_file(filename, &file_size);
+    if (!data) return;
+
+    struct bmp_header* bmp = (struct bmp_header*)data;
+    if (bmp->type != 0x4D42) return;
+    if (bmp->bpp != 24 || bmp->compression != 0) return;
+
+    int width = bmp->width;
+    int height = bmp->height;
+    const uint8_t* pixels = data + bmp->offset;
+    
+    int row_bytes = (width * 3 + 3) & ~3;
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int dest_x = offset_x + x;
+            int dest_y = offset_y + y;
+            if (dest_x >= buf_w || dest_y >= buf_h || dest_x < 0 || dest_y < 0) continue;
+
+            int src_idx = (height - 1 - y) * row_bytes + x * 3;
+            uint8_t b = pixels[src_idx];
+            uint8_t g = pixels[src_idx + 1];
+            uint8_t r = pixels[src_idx + 2];
+            uint32_t color = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+            
+            if (color != 0x000000) {
+                buffer[dest_y * buf_w + dest_x] = color;
+            }
+        }
+    }
+}

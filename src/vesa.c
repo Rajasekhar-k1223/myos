@@ -35,6 +35,12 @@ void vesa_swap_buffers(void) {
     }
 }
 
+void vesa_draw_desktop_bg(uint32_t* bg) {
+    if (double_buffer_enabled && backbuffer && bg) {
+        memcpy(backbuffer, bg, vesa_width * vesa_height * 4);
+    }
+}
+
 uint32_t vesa_get_fb_addr(void) {
     return (uint32_t)fb;
 }

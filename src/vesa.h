@@ -9,6 +9,7 @@ void vesa_init(struct multiboot_info* mbi);
 void vesa_init_backbuffer(void);
 void vesa_set_double_buffer(int enable);
 void vesa_swap_buffers(void);
+void vesa_draw_desktop_bg(uint32_t* bg);
 
 void vesa_putpixel(uint32_t x, uint32_t y, uint32_t color);
 uint32_t vesa_getpixel(uint32_t x, uint32_t y);

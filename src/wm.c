@@ -15,6 +15,8 @@ static window_t windows[MAX_WINDOWS];
 static int num_windows = 0;
 static int redraw_needed = 1;
 
+static uint32_t* desktop_bg_buffer = 0;
+
 static int drag_win_idx = -1;
 static int drag_off_x = 0;
 static int drag_off_y = 0;
@@ -44,8 +46,22 @@ static const uint32_t cursor_bitmap[15][10] = {
 };
 
 void wm_init(void) {
+    extern uint32_t vesa_width, vesa_height;
     vesa_init_backbuffer();
     vesa_set_double_buffer(1);
+    
+    desktop_bg_buffer = (uint32_t*)kmalloc(vesa_width * vesa_height * 4);
+    for (uint32_t i = 0; i < vesa_width * vesa_height; i++) {
+        desktop_bg_buffer[i] = 0x008080;
+    }
+    
+    extern void bmp_load_to_buffer(const char*, uint32_t*, int, int, int, int);
+    // Tile logo.bmp across the desktop
+    for (int y = 0; y < (int)vesa_height; y += 150) {
+        for (int x = 0; x < (int)vesa_width; x += 250) {
+            bmp_load_to_buffer("logo.bmp", desktop_bg_buffer, vesa_width, vesa_height, x, y);
+        }
+    }
 }
 
 void wm_request_redraw(void) {
@@ -145,8 +161,13 @@ void wm_putchar(window_t* win, char c) {
 static void wm_render(void) {
     extern uint32_t vesa_width, vesa_height;
     
-    // 1. Draw Desktop Background (Teal)
-    vesa_clear(0x008080);
+    // 1. Draw Desktop Background
+    extern void vesa_draw_desktop_bg(uint32_t*);
+    if (desktop_bg_buffer) {
+        vesa_draw_desktop_bg(desktop_bg_buffer);
+    } else {
+        vesa_clear(0x008080);
+    }
     
     // 2. Draw Windows
     for (int i = 0; i < num_windows; i++) {
