@@ -2,6 +2,7 @@
 #include "idt.h"
 #include "io.h"
 #include "kernel.h"
+#include "shell.h"
 
 #define KBD_DATA 0x60
 
@@ -41,7 +42,7 @@ static void keyboard_callback(struct registers* regs) {
 
     if (sc < sizeof(sc_ascii)) {
         char c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];
-        if (c) terminal_putchar(c);
+        if (c) shell_handle_keypress(c);
     }
 }
 

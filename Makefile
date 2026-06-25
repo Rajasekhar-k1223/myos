@@ -3,7 +3,7 @@ AS     = gcc -m32
 CFLAGS  = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -no-pie
 LDFLAGS = -T src/linker.ld -nostdlib -no-pie
 
-SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c src/string.c src/pmm.c src/paging.c src/kheap.c
+SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c src/string.c src/pmm.c src/paging.c src/kheap.c src/shell.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S
 OBJS   = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
 

@@ -33,9 +33,15 @@ void terminal_initialize(void) {
     terminal_column = 0;
     terminal_color  = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     terminal_buffer = (uint16_t*)0xB8000;
+    terminal_clear();
+}
+
+void terminal_clear(void) {
     for (size_t y = 0; y < VGA_HEIGHT; y++)
         for (size_t x = 0; x < VGA_WIDTH; x++)
             terminal_buffer[y * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
+    terminal_row = 0;
+    terminal_column = 0;
 }
 
 void terminal_setcolor(uint8_t color) {
@@ -103,6 +109,7 @@ void terminal_writehex(uint32_t n) {
 #include "pmm.h"
 #include "paging.h"
 #include "kheap.h"
+#include "shell.h"
 
 void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_initialize();
@@ -143,5 +150,5 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_writestring("Memory freed successfully!\n");
 
     terminal_writestring("----------------------------------------\n");
-    terminal_writestring("Type something:\n> ");
+    shell_init();
 }
