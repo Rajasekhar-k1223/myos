@@ -1,18 +1,22 @@
-CC = gcc -m32
-AS = gcc -m32
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra
-LDFLAGS = -T src/linker.ld -nostdlib
+CC     = gcc -m32
+AS     = gcc -m32
+CFLAGS  = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -no-pie
+LDFLAGS = -T src/linker.ld -nostdlib -no-pie
+
+SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c
+SRCS_S = src/boot.S src/gdt_flush.S src/isr.S
+OBJS   = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
 
 all: myos.iso
 
-src/boot.o: src/boot.S
-	$(AS) -c src/boot.S -o src/boot.o
+src/%.o: src/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-src/kernel.o: src/kernel.c
-	$(CC) $(CFLAGS) -c src/kernel.c -o src/kernel.o
+src/%.o: src/%.S
+	$(AS) -c $< -o $@
 
-myos.bin: src/boot.o src/kernel.o
-	$(CC) $(LDFLAGS) src/boot.o src/kernel.o -o myos.bin -lgcc
+myos.bin: $(OBJS)
+	$(CC) $(LDFLAGS) $(OBJS) -o myos.bin -lgcc
 
 myos.iso: myos.bin
 	mkdir -p isodir/boot/grub
