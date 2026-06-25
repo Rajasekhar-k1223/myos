@@ -1,6 +1,6 @@
 CC     = gcc -m32
 AS     = gcc -m32
-CFLAGS  = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -no-pie
+CFLAGS  = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -fno-pie -fno-pic
 LDFLAGS = -T src/linker.ld -nostdlib -no-pie -Wl,--build-id=none
 
 SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c src/string.c src/pmm.c src/paging.c src/kheap.c src/shell.c src/tar.c
