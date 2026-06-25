@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "string.h"
 #include "pmm.h"
+#include "tar.h"
 
 #define SHELL_BUFFER_SIZE 256
 static char shell_buffer[SHELL_BUFFER_SIZE];
@@ -34,9 +35,11 @@ static void shell_execute(void) {
         terminal_writestring("myOS System Information\n");
         terminal_writestring("-----------------------\n");
         terminal_writestring("Architecture: i686 (32-bit)\n");
-        // We can grab the max frames from pmm if we exposed it, but we didn't.
-        // Let's just print something generic for now.
         terminal_writestring("Memory Manager: ONLINE (Paging Enabled)\n");
+    } else if (strcmp(shell_buffer, "ls") == 0) {
+        tar_ls();
+    } else if (strncmp(shell_buffer, "cat ", 4) == 0) {
+        tar_cat(&shell_buffer[4]);
     } else {
         terminal_writestring("Command not found: ");
         terminal_writestring(shell_buffer);

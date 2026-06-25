@@ -110,6 +110,7 @@ void terminal_writehex(uint32_t n) {
 #include "paging.h"
 #include "kheap.h"
 #include "shell.h"
+#include "tar.h"
 
 void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_initialize();
@@ -135,19 +136,20 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     kheap_init();
     terminal_writestring("Memory Managers: ONLINE\n");
 
-    terminal_writestring("Testing kmalloc()...\n");
-    void* ptr1 = kmalloc(128);
-    void* ptr2 = kmalloc(256);
-    
-    terminal_writestring("ptr1 allocated at: ");
-    terminal_writehex((uint32_t)ptr1);
-    terminal_writestring("\nptr2 allocated at: ");
-    terminal_writehex((uint32_t)ptr2);
     terminal_writestring("\n");
 
-    kfree(ptr1);
-    kfree(ptr2);
-    terminal_writestring("Memory freed successfully!\n");
+    terminal_writestring("\n");
+
+    // Initialize Virtual Pendrive (RAM Disk)
+    if (mbi->flags & (1 << 3)) { // Check if modules are present
+        if (mbi->mods_count > 0) {
+            struct multiboot_module* mod = (struct multiboot_module*)mbi->mods_addr;
+            tar_init(mod->mod_start);
+            terminal_writestring("Virtual Pendrive: MOUNTED\n");
+        }
+    } else {
+        terminal_writestring("Virtual Pendrive: NOT FOUND\n");
+    }
 
     terminal_writestring("----------------------------------------\n");
     shell_init();
