@@ -9,6 +9,7 @@
 #include "io.h"
 #include "tar.h"
 #include "snake.h"
+#include "calc.h"
 
 #define MAX_WINDOWS 10
 
@@ -274,7 +275,7 @@ static void wm_render(void) {
         }
         
         // Blinking Cursor
-        if (w == focused_window && (strncmp(w->title, "Notepad", 7) == 0 || strncmp(w->title, "Terminal", 8) == 0)) {
+        if (w == focused_window && (strncmp(w->title, "Notepad", 7) == 0 || strncmp(w->title, "Terminal", 8) == 0 || strncmp(w->title, "Calculator", 10) == 0)) {
             uint32_t ticks = pit_get_ticks();
             if ((ticks / 50) % 2 == 0) {
                 vesa_draw_rect(w->x + w->cursor_x, w->y + 20 + w->cursor_y, 8, 8, w->fg_color);
@@ -295,7 +296,7 @@ static void wm_render(void) {
     wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
     
     // Bottom Dock (Modern floating launcher)
-    int dock_w = 320;
+    int dock_w = 380; // Expanded for Calc
     int dock_h = 50;
     int dock_x = (vesa_width - dock_w) / 2;
     int dock_y = vesa_height - dock_h - 10;
@@ -319,6 +320,9 @@ static void wm_render(void) {
     // Theme
     vesa_draw_rect(dock_x + 250, dock_y + 5, 40, 40, 0xAA00AA);
     wm_draw_string(dock_x + 255, dock_y + 20, "Thm", 0xFFFFFF);
+    // Calculator
+    vesa_draw_rect(dock_x + 310, dock_y + 5, 40, 40, 0x008080);
+    wm_draw_string(dock_x + 315, dock_y + 20, "Calc", 0xFFFFFF);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
@@ -429,7 +433,7 @@ void wm_process_events(void) {
         
         // Check Dock Clicks
         if (!clicked_on_something && !start_menu_open) {
-            int dock_w = 320;
+            int dock_w = 380;
             int dock_h = 50;
             int dock_x = (vesa_width - dock_w) / 2;
             int dock_y = vesa_height - dock_h - 10;
@@ -470,6 +474,10 @@ void wm_process_events(void) {
                     theme_idx = !theme_idx;
                     extern theme_t theme_win95, theme_ubuntu;
                     current_theme = theme_idx ? theme_ubuntu : theme_win95;
+                } else if (mx >= dock_x + 310 && mx <= dock_x + 350) {
+                    // Calculator
+                    window_t* calc_win = wm_create_window(200, 200, 300, 250, "Calculator");
+                    calc_init(calc_win);
                 }
             }
         }
@@ -589,7 +597,7 @@ void wm_process_events(void) {
     last_btns = btns;
 
     // Force redraw for blinking cursor if focused window is text-based
-    if (focused_window && (strncmp(focused_window->title, "Notepad", 7) == 0 || strncmp(focused_window->title, "Terminal", 8) == 0)) {
+    if (focused_window && (strncmp(focused_window->title, "Notepad", 7) == 0 || strncmp(focused_window->title, "Terminal", 8) == 0 || strncmp(focused_window->title, "Calculator", 10) == 0)) {
         if (pit_get_ticks() % 50 == 0) redraw_needed = 1;
     }
 
@@ -602,6 +610,9 @@ void wm_process_events(void) {
 int wm_handle_keypress(char c) {
     if (focused_window && (strncmp(focused_window->title, "Notepad", 7) == 0 || strncmp(focused_window->title, "Terminal", 8) == 0)) {
         wm_putchar(focused_window, c);
+        return 1;
+    } else if (focused_window && strncmp(focused_window->title, "Calculator", 10) == 0) {
+        calc_handle_input(focused_window, c);
         return 1;
     }
     return 0;
