@@ -5,8 +5,6 @@
 // 1024 entries * 4 bytes = 4096 bytes (1 frame)
 static uint32_t* page_directory;
 
-extern void load_page_directory(uint32_t*);
-extern void enable_paging(void);
 
 void paging_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
     uint32_t pdindex = virt >> 22;

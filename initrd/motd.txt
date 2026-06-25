@@ -1,0 +1,7 @@
+Welcome to myOS!
+
+This is a 32-bit protected-mode OS running on bare metal (or QEMU).
+The filesystem you are reading from is a TAR archive loaded as a
+multiboot module by GRUB and parsed entirely in kernel memory.
+
+Have fun exploring!

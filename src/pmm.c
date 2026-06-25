@@ -61,3 +61,6 @@ void pmm_free_frame(void* addr) {
     pmm_clear(frame);
     pmm_used_frames--;
 }
+
+uint32_t pmm_get_used_frames(void) { return pmm_used_frames; }
+uint32_t pmm_get_max_frames(void)  { return pmm_max_frames; }

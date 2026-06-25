@@ -98,17 +98,26 @@ void terminal_writestring(const char* data) {
 }
 
 static const char hex_chars[] = "0123456789ABCDEF";
+
 void terminal_writehex(uint32_t n) {
     terminal_writestring("0x");
-    for (int i = 28; i >= 0; i -= 4) {
+    for (int i = 28; i >= 0; i -= 4)
         terminal_putchar(hex_chars[(n >> i) & 0xF]);
-    }
+}
+
+void terminal_writedec(uint32_t n) {
+    if (n == 0) { terminal_putchar('0'); return; }
+    char buf[10];
+    int i = 0;
+    while (n > 0) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i-- > 0) terminal_putchar(buf[i]);
 }
 
 #include "multiboot.h"
 #include "pmm.h"
 #include "paging.h"
 #include "kheap.h"
+#include "pit.h"
 #include "shell.h"
 #include "tar.h"
 
@@ -122,7 +131,8 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
     terminal_writestring("myOS Phase 3\n");
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
-    terminal_writestring("GDT: loaded | IDT: loaded | Keyboard: ready\n");
+    pit_init(100);  /* 100 Hz system timer */
+    terminal_writestring("GDT: loaded | IDT: loaded | PIT: 100Hz | Keyboard: ready\n");
     terminal_writestring("----------------------------------------\n");
 
     if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
