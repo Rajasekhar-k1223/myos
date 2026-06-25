@@ -11,6 +11,7 @@
 #include "snake.h"
 #include "calc.h"
 #include "clock.h"
+#include "wallpaper.h"
 
 #define MAX_WINDOWS 10
 
@@ -171,6 +172,37 @@ static void wm_draw_string(uint32_t x, uint32_t y, const char* str, uint32_t fg)
     }
 }
 
+void wm_draw_string_window(window_t* win, uint32_t x, uint32_t y, const char* str, uint32_t fg) {
+    for (int i = 0; str[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)str[i];
+        for (int row = 0; row < 8; row++) {
+            uint8_t row_data = font8x8[c][row];
+            for (int col = 0; col < 8; col++) {
+                if (row_data & (1 << col)) {
+                    if (x + (i*8) + col < win->w && y + row < win->h) {
+                        win->buffer[(y + row) * win->w + (x + (i*8) + col)] = fg;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void wm_set_wallpaper(const char* filename) {
+    extern uint32_t vesa_width, vesa_height;
+    if (!desktop_bg_buffer) return;
+    for (uint32_t i = 0; i < vesa_width * vesa_height; i++) {
+        desktop_bg_buffer[i] = 0x008080;
+    }
+    extern void bmp_load_to_buffer(const char*, uint32_t*, int, int, int, int);
+    for (int y = 0; y < (int)vesa_height; y += 150) {
+        for (int x = 0; x < (int)vesa_width; x += 250) {
+            bmp_load_to_buffer(filename, desktop_bg_buffer, vesa_width, vesa_height, x, y);
+        }
+    }
+    wm_request_redraw();
+}
+
 void wm_putchar(window_t* win, char c) {
     if (!win || !win->buffer) return;
     
@@ -297,7 +329,7 @@ static void wm_render(void) {
     wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
     
     // Bottom Dock (Modern floating launcher)
-    int dock_w = 440; // Expanded for Clock
+    int dock_w = 500; // Expanded for Wall
     int dock_h = 50;
     int dock_x = (vesa_width - dock_w) / 2;
     int dock_y = vesa_height - dock_h - 10;
@@ -327,6 +359,9 @@ static void wm_render(void) {
     // Clock
     vesa_draw_rect(dock_x + 370, dock_y + 5, 40, 40, 0x000000);
     wm_draw_string(dock_x + 375, dock_y + 20, "Time", 0xFFFFFF);
+    // Wallpaper
+    vesa_draw_rect(dock_x + 430, dock_y + 5, 40, 40, 0x808000);
+    wm_draw_string(dock_x + 435, dock_y + 20, "Wall", 0xFFFFFF);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
@@ -444,7 +479,7 @@ void wm_process_events(void) {
         
         // Check Dock Clicks
         if (!clicked_on_something && !start_menu_open) {
-            int dock_w = 440;
+            int dock_w = 500;
             int dock_h = 50;
             int dock_x = (vesa_width - dock_w) / 2;
             int dock_y = vesa_height - dock_h - 10;
@@ -493,6 +528,10 @@ void wm_process_events(void) {
                     // Clock
                     window_t* clk_win = wm_create_window(300, 100, 250, 250, "Analog Clock");
                     clock_init(clk_win);
+                } else if (mx >= dock_x + 430 && mx <= dock_x + 470) {
+                    // Wallpaper
+                    window_t* wall_win = wm_create_window(100, 100, 220, 250, "Wallpaper Selector");
+                    wallpaper_init(wall_win);
                 }
             }
         }
@@ -572,6 +611,15 @@ void wm_process_events(void) {
                                 }
                             }
                         }
+                        clicked_on_something = 1;
+                        break;
+                    }
+                    
+                    // Check if click is inside Wallpaper Selector
+                    if (strcmp(w->title, "Wallpaper Selector") == 0 &&
+                        mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                        my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        wallpaper_handle_click(w, mx, my);
                         clicked_on_something = 1;
                         break;
                     }
