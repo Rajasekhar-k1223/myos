@@ -42,7 +42,12 @@ static void keyboard_callback(struct registers* regs) {
 
     if (sc < sizeof(sc_ascii)) {
         char c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];
-        if (c) shell_handle_keypress(c);
+        if (c) {
+            extern int snake_handle_input(char c);
+            if (!snake_handle_input(c)) {
+                shell_handle_keypress(c);
+            }
+        }
     }
 }
 

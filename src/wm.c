@@ -8,6 +8,7 @@
 #include "pit.h"
 #include "io.h"
 #include "tar.h"
+#include "snake.h"
 
 #define MAX_WINDOWS 10
 
@@ -287,6 +288,7 @@ static void wm_render(void) {
         wm_draw_string(m_x + 35, m_y + 45, "New Window", 0x000000);
         wm_draw_string(m_x + 35, m_y + 70, "Image Viewer", 0x000000);
         wm_draw_string(m_x + 35, m_y + 95, "File Explorer", 0x000000);
+        wm_draw_string(m_x + 35, m_y + 120, "Play Snake", 0x000000);
         
         vesa_draw_rect(m_x + 35, m_y + 160, m_w - 45, 1, 0x808080); // Separator
         
@@ -367,6 +369,12 @@ void wm_process_events(void) {
                     for(int j = 0; name[j]; j++) wm_putchar(fe_win, name[j]);
                     wm_putchar(fe_win, '\n');
                 }
+                start_menu_open = 0;
+                redraw_needed = 1;
+            } else if (my >= (int)(m_y + 115) && my <= (int)(m_y + 135)) {
+                // Snake
+                window_t* snake_win = wm_create_window(200, 150, 400, 400, "Snake");
+                snake_init(snake_win);
                 start_menu_open = 0;
                 redraw_needed = 1;
             } else if (my >= (int)(m_y + 170) && my <= (int)(m_y + 190)) {
