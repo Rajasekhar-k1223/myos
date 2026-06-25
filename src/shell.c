@@ -432,11 +432,35 @@ done:
 }
 
 /* ── Keypress handler ────────────────────────────────────────────────────── */
+/* Replace the current typed line (erases old chars, echoes new ones) */
+static void shell_set_input(const char* line) {
+    while (buf_len > 0) { buf_len--; terminal_putchar('\b'); }
+    buf_len = 0;
+    while (line[buf_len] && buf_len < BUF_SIZE - 1) {
+        buf[buf_len] = line[buf_len];
+        terminal_putchar(line[buf_len]);
+        buf_len++;
+    }
+    buf[buf_len] = '\0';
+}
+
 void shell_handle_keypress(char c) {
     if (c == '\n') {
         execute();
     } else if (c == '\b') {
         if (buf_len > 0) { buf_len--; terminal_putchar('\b'); }
+    } else if (c == '\x10') { /* Up arrow — history prev */
+        if (hist_count == 0) return;
+        if (hist_pos == -1)
+            hist_pos = hist_count - 1;
+        else if (hist_pos > (int)(hist_count > HISTORY_SLOTS ? hist_count - HISTORY_SLOTS : 0))
+            hist_pos--;
+        shell_set_input(history[hist_pos % HISTORY_SLOTS]);
+    } else if (c == '\x11') { /* Down arrow — history next */
+        if (hist_pos == -1) return;
+        hist_pos++;
+        if (hist_pos >= hist_count) { hist_pos = -1; shell_set_input(""); }
+        else shell_set_input(history[hist_pos % HISTORY_SLOTS]);
     } else if (c >= ' ' && c <= '~') {
         if (buf_len < BUF_SIZE - 1) { buf[buf_len++] = c; terminal_putchar(c); }
     }

@@ -55,6 +55,18 @@ static void keyboard_callback(struct registers* regs) {
         wm_handle_shortcut(18);
         return;
     }
+    if (sc == 0x48) { // Up arrow — history prev (\x10)
+        extern int wm_handle_keypress(char c);
+        extern void shell_handle_keypress(char c);
+        if (!wm_handle_keypress('\x10')) shell_handle_keypress('\x10');
+        return;
+    }
+    if (sc == 0x50) { // Down arrow — history next (\x11)
+        extern int wm_handle_keypress(char c);
+        extern void shell_handle_keypress(char c);
+        if (!wm_handle_keypress('\x11')) shell_handle_keypress('\x11');
+        return;
+    }
 
     if (sc < sizeof(sc_ascii)) {
         char c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];

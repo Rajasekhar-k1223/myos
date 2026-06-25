@@ -1625,7 +1625,17 @@ void wm_process_events(void) {
 }
 
 int wm_handle_keypress(char c) {
-    if (focused_window && (strncmp(focused_window->title, "Notepad", 7) == 0 || strncmp(focused_window->title, "Terminal", 8) == 0)) {
+    extern window_t* shell_window;
+    if (focused_window && strncmp(focused_window->title, "Terminal", 8) == 0) {
+        if (focused_window == shell_window) {
+            /* Route to shell — it echoes via terminal_putchar → wm_putchar */
+            extern void shell_handle_keypress(char c);
+            shell_handle_keypress(c);
+        } else {
+            wm_putchar(focused_window, c);
+        }
+        return 1;
+    } else if (focused_window && strncmp(focused_window->title, "Notepad", 7) == 0) {
         wm_putchar(focused_window, c);
         return 1;
     } else if (focused_window && strncmp(focused_window->title, "Calculator", 10) == 0) {
