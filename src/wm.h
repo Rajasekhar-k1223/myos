@@ -26,6 +26,7 @@ typedef struct {
 extern theme_t current_theme;
 
 int wm_handle_keypress(char c);
+int wm_handle_shortcut(char key);
 
 void wm_init(void);
 void wm_request_redraw(void);

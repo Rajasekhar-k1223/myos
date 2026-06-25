@@ -29,6 +29,7 @@ static const char sc_ascii_shift[] = {
 };
 
 static int shift_held = 0;
+static int ctrl_held = 0;
 
 static void keyboard_callback(struct registers* regs) {
     (void)regs;
@@ -38,6 +39,10 @@ static void keyboard_callback(struct registers* regs) {
     if (sc == 0x2A || sc == 0x36) { shift_held = 1; return; }
     if (sc == 0xAA || sc == 0xB6) { shift_held = 0; return; }
 
+    /* Ctrl press/release */
+    if (sc == 0x1D) { ctrl_held = 1; return; }
+    if (sc == 0x9D) { ctrl_held = 0; return; }
+
     if (sc & 0x80) return; /* ignore all other key-release events */
 
     if (sc < sizeof(sc_ascii)) {
@@ -45,9 +50,15 @@ static void keyboard_callback(struct registers* regs) {
         if (c) {
             extern int snake_handle_input(char c);
             extern int wm_handle_keypress(char c);
-            if (!snake_handle_input(c)) {
-                if (!wm_handle_keypress(c)) {
-                    shell_handle_keypress(c);
+            extern int wm_handle_shortcut(char c);
+            
+            if (ctrl_held) {
+                wm_handle_shortcut(c);
+            } else {
+                if (!snake_handle_input(c)) {
+                    if (!wm_handle_keypress(c)) {
+                        shell_handle_keypress(c);
+                    }
                 }
             }
         }

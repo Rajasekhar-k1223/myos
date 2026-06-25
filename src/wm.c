@@ -212,6 +212,32 @@ void wm_set_wallpaper(const char* filename) {
     wm_request_redraw();
 }
 
+int wm_handle_shortcut(char key) {
+    extern window_t* shell_window;
+    if (key == 't' || key == 'T') {
+        shell_window = wm_create_window(100, 100, 500, 350, "Terminal");
+        redraw_needed = 1;
+        return 1;
+    }
+    if (key == 'e' || key == 'E') {
+        window_t* exp_win = wm_create_window(100, 100, 400, 300, "File Explorer");
+        explorer_init(exp_win);
+        redraw_needed = 1;
+        return 1;
+    }
+    if (key == 'w' || key == 'W') {
+        if (focused_window) {
+            focused_window->active = 0;
+            if (shell_window == focused_window) shell_window = 0;
+            focused_window = 0;
+            redraw_needed = 1;
+            speaker_beep(2000, 10);
+        }
+        return 1;
+    }
+    return 0;
+}
+
 void wm_putchar(window_t* win, char c) {
     if (!win || !win->buffer) return;
     
@@ -719,7 +745,7 @@ void wm_process_events(void) {
     
     // Process Window Dragging
     if (left_click_held && drag_win_idx != -1 && resizing_window == 0) {
-        int new_x = mx - drag_off_x;
+        windows[drag_win_idx].x = mx - drag_off_x;
         windows[drag_win_idx].y = my - drag_off_y;
         redraw_needed = 1;
     }
