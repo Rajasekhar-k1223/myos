@@ -53,6 +53,29 @@ static uint32_t last_clock_ticks = 0;
 static int start_menu_open = 0;
 static int start_btn_pressed = 0;
 
+/* System clipboard */
+static char     clipboard_buf[8192];
+static uint32_t clipboard_len = 0;
+
+/* Right-click context menu */
+static int  ctx_menu_open = 0;
+static int  ctx_menu_x    = 0;
+static int  ctx_menu_y    = 0;
+
+#define CTX_ITEM_H  20
+#define CTX_MENU_W  164
+
+static const char* ctx_items[] = {
+    "New Terminal",
+    "New Notepad",
+    "File Explorer",
+    "Minesweeper",
+    "Theme Settings",
+    "-",
+    "Refresh Desktop",
+};
+#define CTX_NUM_ITEMS 7
+
 theme_t theme_win95 = {
     .window_bg = 0xC0C0C0,
     .window_border = 0xC0C0C0,
@@ -97,6 +120,11 @@ static const uint32_t cursor_bitmap[15][10] = {
     {1,0,0,0,0,1,1,0,0,0},
 };
 
+static uint32_t icon_term_buf[32 * 32];
+static uint32_t icon_expl_buf[32 * 32];
+static uint32_t icon_sett_buf[32 * 32];
+static uint32_t icon_pnt_buf[32 * 32];
+
 void wm_init(void) {
     extern uint32_t vesa_width, vesa_height;
     vesa_init_backbuffer();
@@ -116,6 +144,19 @@ void wm_init(void) {
             bmp_load_to_buffer("logo.bmp", desktop_bg_buffer, vesa_width, vesa_height, x, y);
         }
     }
+    
+    memset(icon_term_buf, 0, sizeof(icon_term_buf));
+    memset(icon_expl_buf, 0, sizeof(icon_expl_buf));
+    memset(icon_sett_buf, 0, sizeof(icon_sett_buf));
+    memset(icon_pnt_buf,  0, sizeof(icon_pnt_buf));
+    bmp_load_to_buffer("icon_term.bmp", icon_term_buf, 32, 32, 0, 0);
+    bmp_load_to_buffer("icon_expl.bmp", icon_expl_buf, 32, 32, 0, 0);
+    bmp_load_to_buffer("icon_sett.bmp", icon_sett_buf, 32, 32, 0, 0);
+    bmp_load_to_buffer("icon_pnt.bmp",  icon_pnt_buf,  32, 32, 0, 0);
+    
+    // Create initial terminal
+    extern window_t* shell_window;
+    shell_window = wm_create_window(50, 50, 600, 400, "Terminal");
     
     // Cache desktop icons
     char name[100];
@@ -261,6 +302,8 @@ static void wm_notepad_reload(window_t* win, const uint8_t* data, uint32_t len) 
     win->text_len = saved_len;
 }
 
+static void wm_redraw_term(window_t* win);
+
 int wm_handle_shortcut(char key) {
     extern window_t* shell_window;
     if (key == 't' || key == 'T') {
@@ -336,8 +379,8 @@ int wm_handle_shortcut(char key) {
         redraw_needed = 1;
         return 1;
     }
-    if (key == 's' || key == 'S') {
-        window_t* set_win = wm_create_window(200, 200, 300, 250, "Theme Settings");
+    if (key == 'i' || key == 'I') {
+        window_t* set_win = wm_create_window(200, 150, 300, 250, "Theme Settings");
         settings_init(set_win);
         redraw_needed = 1;
         return 1;
@@ -356,6 +399,42 @@ int wm_handle_shortcut(char key) {
             wm_redraw_term(focused_window);
             return 1;
         }
+    }
+    if (key == 'c' || key == 'C') {
+        /* Copy focused Notepad text_buf → clipboard */
+        if (focused_window && focused_window->text_buf && focused_window->text_len > 0) {
+            clipboard_len = focused_window->text_len;
+            if (clipboard_len > 8191) clipboard_len = 8191;
+            memcpy(clipboard_buf, focused_window->text_buf, clipboard_len);
+            clipboard_buf[clipboard_len] = '\0';
+            char tmsg[48];
+            sprintf(tmsg, "Copied: %u chars", (unsigned)clipboard_len);
+            wm_toast(tmsg, 150);
+        }
+        return 1;
+    }
+    if (key == 'v' || key == 'V') {
+        /* Paste clipboard into focused window */
+        if (clipboard_len > 0 && focused_window) {
+            for (uint32_t i = 0; i < clipboard_len; i++)
+                wm_putchar(focused_window, clipboard_buf[i]);
+            wm_toast("Pasted", 100);
+            redraw_needed = 1;
+        }
+        return 1;
+    }
+    if (key == 'a' || key == 'A') {
+        /* Select-all: copy entire text_buf to clipboard (Notepad only) */
+        if (focused_window && focused_window->text_buf && focused_window->text_len > 0) {
+            clipboard_len = focused_window->text_len;
+            if (clipboard_len > 8191) clipboard_len = 8191;
+            memcpy(clipboard_buf, focused_window->text_buf, clipboard_len);
+            clipboard_buf[clipboard_len] = '\0';
+            char tmsg[48];
+            sprintf(tmsg, "Selected: %u chars", (unsigned)clipboard_len);
+            wm_toast(tmsg, 120);
+        }
+        return 1;
     }
     return 0;
 }
@@ -591,28 +670,53 @@ static void wm_render(void) {
         }
     }
 
-    // 2.5 Draw Minimized Window Taskbar (strip above dock)
+    // 2.5 Window Taskbar (all open windows, above dock)
     {
-        int strip_y = (int)vesa_height - 50 - 10 - 26; /* just above dock */
-        int strip_x = 10;
-        int any_minimized = 0;
-        for (int i = 0; i < num_windows; i++) {
-            window_t* w = &windows[i];
-            if (!w->active || !w->minimized) continue;
-            any_minimized = 1;
-            /* Draw a compact title pill */
-            int btn_w = 120;
-            vesa_draw_rect((uint32_t)strip_x, (uint32_t)strip_y, (uint32_t)btn_w, 22,
-                           (w == focused_window) ? current_theme.title_bg : current_theme.title_inactive_bg);
-            /* Truncate title to ~14 chars */
-            char short_title[15];
-            strncpy(short_title, w->title, 14);
-            short_title[14] = '\0';
-            wm_draw_string((uint32_t)(strip_x + 4), (uint32_t)(strip_y + 3),
-                           short_title, current_theme.title_fg);
-            strip_x += btn_w + 4;
+        int strip_h = 26;
+        int strip_y = (int)vesa_height - 50 - 10 - strip_h - 2;
+        int btn_w   = 140;
+        int max_btns = ((int)vesa_width - 20) / (btn_w + 4);
+        int count = 0;
+        /* Count active windows */
+        for (int i = 0; i < num_windows; i++)
+            if (windows[i].active) count++;
+        if (count > 0) {
+            /* Dark background bar */
+            vesa_draw_rect(0, (uint32_t)strip_y, vesa_width, (uint32_t)strip_h,
+                           0x111122);
+            int strip_x = 10;
+            for (int i = 0; i < num_windows && i < max_btns; i++) {
+                window_t* w = &windows[i];
+                if (!w->active) continue;
+                uint32_t bg;
+                if (w == focused_window && !w->minimized)
+                    bg = current_theme.title_bg;          /* focused */
+                else if (w->minimized)
+                    bg = 0x334455;                        /* minimized */
+                else
+                    bg = current_theme.title_inactive_bg; /* open, not focused */
+                vesa_draw_rect((uint32_t)strip_x, (uint32_t)(strip_y + 2),
+                               (uint32_t)btn_w, (uint32_t)(strip_h - 4), bg);
+                /* Truncate title to 16 chars */
+                char short_title[17];
+                strncpy(short_title, w->title, 16);
+                short_title[16] = '\0';
+                /* Prefix minimised windows with "_" */
+                if (w->minimized) {
+                    char tmp[18];
+                    tmp[0] = '_'; tmp[1] = ' ';
+                    strncpy(tmp + 2, short_title, 15);
+                    tmp[17] = '\0';
+                    wm_draw_string((uint32_t)(strip_x + 4),
+                                   (uint32_t)(strip_y + 5), tmp, 0xAAAACC);
+                } else {
+                    wm_draw_string((uint32_t)(strip_x + 4),
+                                   (uint32_t)(strip_y + 5), short_title,
+                                   current_theme.title_fg);
+                }
+                strip_x += btn_w + 4;
+            }
         }
-        (void)any_minimized;
     }
 
     // 3. Draw Top Bar (Modern Linux Style)
@@ -628,7 +732,7 @@ static void wm_render(void) {
     wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
     
     // Bottom Dock (Modern floating launcher)
-    int dock_w = 680; // Expanded for Notepad
+    int dock_w = 800;
     int dock_h = 50;
     int dock_x = (vesa_width - dock_w) / 2;
     int dock_y = vesa_height - dock_h - 10;
@@ -636,13 +740,26 @@ static void wm_render(void) {
     // Draw rounded dock base
     vesa_draw_rect(dock_x, dock_y, dock_w, dock_h, current_theme.taskbar_bg);
     
+    // Helper to draw icon (with transparency treated as black=0)
+    void draw_dock_icon(int bx, int by, uint32_t* icon_buf) {
+        if (!icon_buf) return;
+        for (int y = 0; y < 32; y++) {
+            for (int x = 0; x < 32; x++) {
+                uint32_t col = icon_buf[y * 32 + x];
+                if (col != 0) {
+                    vesa_putpixel_alpha(bx + x, by + y, col, 255);
+                }
+            }
+        }
+    }
+    
     // Dock Icons
-    // Terminal
-    vesa_draw_rect(dock_x + 10, dock_y + 5, 40, 40, 0x111111);
-    wm_draw_string(dock_x + 20, dock_y + 20, ">_", 0x00FF00);
-    // Files
-    vesa_draw_rect(dock_x + 70, dock_y + 5, 40, 40, 0x0000AA);
-    wm_draw_string(dock_x + 75, dock_y + 20, "Dir", 0xFFFFFF);
+    // Terminal (using new 32x32 BMP icon)
+    draw_dock_icon(dock_x + 14, dock_y + 9, icon_term_buf);
+    
+    // Files (Explorer) (using new 32x32 BMP icon)
+    draw_dock_icon(dock_x + 74, dock_y + 9, icon_expl_buf);
+    
     // Snake
     vesa_draw_rect(dock_x + 130, dock_y + 5, 40, 40, 0x00AA00);
     wm_draw_string(dock_x + 135, dock_y + 20, "Snk", 0xFFFFFF);
@@ -661,15 +778,20 @@ static void wm_render(void) {
     // Wallpaper
     vesa_draw_rect(dock_x + 430, dock_y + 5, 40, 40, 0x808000);
     wm_draw_string(dock_x + 435, dock_y + 20, "Wall", 0xFFFFFF);
-    // Paint
-    vesa_draw_rect(dock_x + 490, dock_y + 5, 40, 40, 0xFF00FF);
-    wm_draw_string(dock_x + 495, dock_y + 20, "Paint", 0xFFFFFF);
-    // Explorer
+    // Paint (using new 32x32 BMP icon)
+    draw_dock_icon(dock_x + 494, dock_y + 9, icon_pnt_buf);
+    
+    // Explorer text button placeholder
     vesa_draw_rect(dock_x + 550, dock_y + 5, 40, 40, 0xDAA520);
     wm_draw_string(dock_x + 555, dock_y + 20, "Files", 0xFFFFFF);
     // Notepad
     vesa_draw_rect(dock_x + 610, dock_y + 5, 40, 40, 0x1A1A2E);
     wm_draw_string(dock_x + 615, dock_y + 20, "Note", 0xE0E0E0);
+    // Minesweeper
+    vesa_draw_rect(dock_x + 670, dock_y + 5, 40, 40, 0x2D5A27);
+    wm_draw_string(dock_x + 675, dock_y + 20, "Mine", 0xFFFFFF);
+    // Theme Settings (using new 32x32 BMP icon)
+    draw_dock_icon(dock_x + 734, dock_y + 9, icon_sett_buf);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
@@ -722,7 +844,41 @@ static void wm_render(void) {
         redraw_needed = 1;
     }
 
-    // 6. Draw Mouse
+    // 6. Draw Context Menu
+    if (ctx_menu_open) {
+        int cw = CTX_MENU_W;
+        int ch = CTX_NUM_ITEMS * CTX_ITEM_H + 4;
+        int cx = ctx_menu_x;
+        int cy = ctx_menu_y;
+        /* Clamp to screen */
+        if (cx + cw > (int)vesa_width)  cx = (int)vesa_width  - cw - 2;
+        if (cy + ch > (int)vesa_height) cy = (int)vesa_height - ch - 2;
+        /* Background */
+        for (int yy = 0; yy < ch; yy++)
+            for (int xx = 0; xx < cw; xx++)
+                vesa_putpixel(cx + xx, cy + yy, 0x1E1E2E);
+        /* Border */
+        for (int xx = 0; xx < cw; xx++) {
+            vesa_putpixel(cx + xx, cy,        0x5555AA);
+            vesa_putpixel(cx + xx, cy + ch-1, 0x5555AA);
+        }
+        for (int yy = 0; yy < ch; yy++) {
+            vesa_putpixel(cx,      cy + yy, 0x5555AA);
+            vesa_putpixel(cx+cw-1, cy + yy, 0x5555AA);
+        }
+        /* Items */
+        for (int i = 0; i < CTX_NUM_ITEMS; i++) {
+            int iy = cy + 2 + i * CTX_ITEM_H;
+            if (ctx_items[i][0] == '-') {
+                for (int xx = 4; xx < cw - 4; xx++)
+                    vesa_putpixel(cx + xx, iy + CTX_ITEM_H/2, 0x5555AA);
+            } else {
+                wm_draw_string(cx + 8, iy + 2, ctx_items[i], 0xE0E0E0);
+            }
+        }
+    }
+
+    // 7. Draw Mouse
     int mx = mouse_get_x();
     int my = mouse_get_y();
     for (int y = 0; y < 15; y++) {
@@ -765,9 +921,47 @@ void wm_process_events(void) {
     
     if (left_click_just_pressed) {
         int clicked_on_something = 0;
-        
+
+        /* Context menu click */
+        if (ctx_menu_open) {
+            ctx_menu_open = 0;
+            redraw_needed = 1;
+            int cw = CTX_MENU_W;
+            int ch = CTX_NUM_ITEMS * CTX_ITEM_H + 4;
+            int cx = ctx_menu_x;
+            int cy = ctx_menu_y;
+            if (cx + cw > (int)vesa_width)  cx = (int)vesa_width  - cw - 2;
+            if (cy + ch > (int)vesa_height) cy = (int)vesa_height - ch - 2;
+            if (mx >= cx && mx <= cx + cw && my >= cy && my <= cy + ch) {
+                int item = (my - cy - 2) / CTX_ITEM_H;
+                if (item >= 0 && item < CTX_NUM_ITEMS && ctx_items[item][0] != '-') {
+                    extern window_t* shell_window;
+                    if (item == 0) { /* New Terminal */
+                        shell_window = wm_create_window(100, 100, 500, 350, "Terminal");
+                    } else if (item == 1) { /* New Notepad */
+                        wm_notepad_open("Notepad", 120, 80);
+                    } else if (item == 2) { /* File Explorer */
+                        window_t* exp_win = wm_create_window(100, 100, 400, 300, "File Explorer");
+                        explorer_init(exp_win);
+                    } else if (item == 3) { /* Minesweeper */
+                        window_t* ms_win = wm_create_window(150, 150, 220, 240, "Minesweeper");
+                        minesweeper_init(ms_win);
+                    } else if (item == 4) { /* Theme Settings */
+                        window_t* set_win = wm_create_window(200, 150, 300, 250, "Theme Settings");
+                        settings_init(set_win);
+                    } else if (item == 6) { /* Refresh Desktop */
+                        /* nothing extra needed — redraw already set */
+                    }
+                    redraw_needed = 1;
+                }
+                clicked_on_something = 1;
+            }
+            /* clicking outside the menu just closes it */
+            clicked_on_something = 1;
+        }
+
         // Check Top Bar "Activities" click
-        if (mx >= 0 && mx <= 80 && my >= 0 && my <= 24) {
+        if (!clicked_on_something && mx >= 0 && mx <= 80 && my >= 0 && my <= 24) {
             start_btn_pressed = 1;
             clicked_on_something = 1;
             redraw_needed = 1;
@@ -804,7 +998,7 @@ void wm_process_events(void) {
         
         // Check Dock Clicks
         if (!clicked_on_something && !start_menu_open) {
-            int dock_w = 620;
+            int dock_w = 800;
             int dock_h = 50;
             int dock_x = (vesa_width - dock_w) / 2;
             int dock_y = vesa_height - dock_h - 10;
@@ -868,25 +1062,53 @@ void wm_process_events(void) {
                 } else if (mx >= dock_x + 610 && mx <= dock_x + 650) {
                     // Notepad
                     wm_notepad_open("Notepad", 120, 80);
+                } else if (mx >= dock_x + 670 && mx <= dock_x + 710) {
+                    // Minesweeper
+                    window_t* ms_win = wm_create_window(150, 150, 220, 240, "Minesweeper");
+                    minesweeper_init(ms_win);
+                } else if (mx >= dock_x + 730 && mx <= dock_x + 770) {
+                    // Theme Settings
+                    window_t* set_win = wm_create_window(200, 150, 300, 250, "Theme Settings");
+                    settings_init(set_win);
                 }
             }
         }
         
-        // Check Minimized Taskbar pills first
+        // Check Window Taskbar buttons (all open windows)
         if (!clicked_on_something) {
-            int strip_y = (int)vesa_height - 50 - 10 - 26;
+            int strip_h = 26;
+            int strip_y = (int)vesa_height - 50 - 10 - strip_h - 2;
+            int btn_w   = 140;
             int strip_x = 10;
             for (int i = 0; i < num_windows; i++) {
                 window_t* w = &windows[i];
-                if (!w->active || !w->minimized) continue;
-                int btn_w = 120;
+                if (!w->active) continue;
                 if (mx >= strip_x && mx <= strip_x + btn_w &&
-                    my >= strip_y && my <= strip_y + 22) {
-                    w->minimized = 0;
-                    focused_window = w;
+                    my >= strip_y && my <= strip_y + strip_h) {
+                    if (w->minimized) {
+                        /* Restore minimized window */
+                        w->minimized = 0;
+                        focused_window = w;
+                        speaker_beep(600, 60);
+                    } else if (w == focused_window) {
+                        /* Click focused window → minimize it */
+                        w->minimized = 1;
+                        focused_window = (num_windows > 1)
+                                         ? &windows[num_windows - 2] : 0;
+                        speaker_beep(400, 60);
+                    } else {
+                        /* Bring non-focused window to front */
+                        focused_window = w;
+                        /* Shift window to top of z-order */
+                        window_t tmp = *w;
+                        for (int j = i; j < num_windows - 1; j++)
+                            windows[j] = windows[j + 1];
+                        windows[num_windows - 1] = tmp;
+                        focused_window = &windows[num_windows - 1];
+                        speaker_beep(550, 40);
+                    }
                     clicked_on_something = 1;
                     redraw_needed = 1;
-                    speaker_beep(600, 60);
                     break;
                 }
                 strip_x += btn_w + 4;
@@ -1087,20 +1309,36 @@ void wm_process_events(void) {
     
     int right_click_just_pressed = (btns & 2) && !(last_btns & 2);
     if (right_click_just_pressed) {
+        /* Close context menu if already open */
+        if (ctx_menu_open) {
+            ctx_menu_open = 0;
+            redraw_needed = 1;
+        }
+        /* Check if right-click hit a window */
+        int hit_window = 0;
         if (!start_menu_open) {
             for (int i = num_windows - 1; i >= 0; i--) {
                 window_t* w = &windows[i];
-                if (w->active) {
+                if (w->active && !w->minimized) {
                     if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
-                        my >= (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        my >= (int)(w->y) && my <= (int)(w->y + w->h + 20)) {
                         focused_window = w;
-                        if (strcmp(w->title, "Minesweeper") == 0) {
+                        if (strcmp(w->title, "Minesweeper") == 0 &&
+                            my > (int)(w->y + 20)) {
                             minesweeper_handle_click(w, mx, my, 1);
                         }
+                        hit_window = 1;
                         break;
                     }
                 }
             }
+        }
+        /* Right-click on desktop → open context menu */
+        if (!hit_window && !start_menu_open) {
+            ctx_menu_x = mx;
+            ctx_menu_y = my;
+            ctx_menu_open = 1;
+            redraw_needed = 1;
         }
     }
 
