@@ -14,6 +14,7 @@
 #include "wallpaper.h"
 #include "paint.h"
 #include "explorer.h"
+#include "speaker.h"
 
 #define MAX_WINDOWS 10
 
@@ -577,15 +578,16 @@ void wm_process_events(void) {
                         // Check if click is inside the Close Button (X)
                         if (mx >= (int)(w->x + w->w - 18) && mx <= (int)(w->x + w->w - 2) &&
                             my >= (int)(w->y + 2) && my <= (int)(w->y + 18)) {
-                        w->active = 0; // Close the window
-                        extern window_t* shell_window;
-                        if (shell_window == w) {
-                            shell_window = 0; // Safely disconnect shell output
+                            speaker_beep(2000, 10); // UI Click sound!
+                            w->active = 0; // Close the window
+                            extern window_t* shell_window;
+                            if (shell_window == w) {
+                                shell_window = 0; // Safely disconnect shell output
+                            }
+                            clicked_on_something = 1;
+                            redraw_needed = 1;
+                            break;
                         }
-                        clicked_on_something = 1;
-                        redraw_needed = 1;
-                        break;
-                    }
                     
                     // Check if click is inside the title bar (for dragging)
                     if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&

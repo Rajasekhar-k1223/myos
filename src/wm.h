@@ -30,5 +30,6 @@ int wm_handle_keypress(char c);
 void wm_init(void);
 void wm_request_redraw(void);
 window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const char* title);
+void wm_draw_string_window(window_t* win, uint32_t x, uint32_t y, const char* str, uint32_t fg);
 void wm_putchar(window_t* win, char c);
 void wm_process_events(void);

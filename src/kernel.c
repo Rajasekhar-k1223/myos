@@ -22,6 +22,7 @@
 #include "wm.h"
 #include "ata.h"
 #include "fs.h"
+#include "speaker.h"
 
 window_t* shell_window = 0;
 

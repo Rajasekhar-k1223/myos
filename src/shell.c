@@ -9,6 +9,7 @@
 #include "io.h"
 #include "ata.h"
 #include "fs.h"
+#include "speaker.h"
 
 /* ── Buffer / state ──────────────────────────────────────────────────────── */
 #define BUF_SIZE      256
@@ -349,6 +350,12 @@ static void execute(void) {
     else if (strcmp(cmd, "formatfs") == 0) {
         fs_format();
         terminal_printf("  MyFS formatted successfully.\n");
+    }
+    else if (strncmp(cmd, "beep ", 5) == 0) {
+        int freq = (int)strtol(cmd + 5, NULL, 10);
+        if (freq < 20 || freq > 20000) freq = 1000;
+        speaker_beep(freq, 200);
+        terminal_printf("  Beep at %d Hz.\n", freq);
     }
     else {
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
