@@ -92,21 +92,23 @@ void vesa_clear(uint32_t color) {
     }
 }
 
-void vesa_scroll(void) {
+void vesa_scroll_by(uint32_t pixels) {
+    if (pixels == 0 || pixels >= vesa_height) return;
     if (double_buffer_enabled && backbuffer) {
-        for (uint32_t y = 0; y < vesa_height - 8; y++) {
-            for (uint32_t x = 0; x < vesa_width; x++) {
-                backbuffer[y * vesa_width + x] = backbuffer[(y + 8) * vesa_width + x];
-            }
-        }
-        vesa_draw_rect(0, vesa_height - 8, vesa_width, 8, 0x000000);
+        for (uint32_t y = 0; y < vesa_height - pixels; y++)
+            for (uint32_t x = 0; x < vesa_width; x++)
+                backbuffer[y * vesa_width + x] = backbuffer[(y + pixels) * vesa_width + x];
+        vesa_draw_rect(0, vesa_height - pixels, vesa_width, pixels, 0x000000);
         vesa_swap_buffers();
     } else if (fb) {
-        for (uint32_t y = 0; y < vesa_height - 8; y++) {
-            for (uint32_t x = 0; x < vesa_width; x++) {
-                fb[y * (fb_pitch / 4) + x] = fb[(y + 8) * (fb_pitch / 4) + x];
-            }
-        }
-        vesa_draw_rect(0, vesa_height - 8, vesa_width, 8, 0x000000);
+        uint32_t stride = fb_pitch / 4;
+        for (uint32_t y = 0; y < vesa_height - pixels; y++)
+            for (uint32_t x = 0; x < vesa_width; x++)
+                fb[y * stride + x] = fb[(y + pixels) * stride + x];
+        vesa_draw_rect(0, vesa_height - pixels, vesa_width, pixels, 0x000000);
     }
+}
+
+void vesa_scroll(void) {
+    vesa_scroll_by(16);   /* default: one 8×16 font row */
 }

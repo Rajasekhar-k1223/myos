@@ -29,8 +29,10 @@
 window_t* shell_window = 0;
 
 /* ── VESA Terminal Driver ────────────────────────────────────────────────── */
-#include "font.h"
-#include "vesa.h"
+#include "font16.h"   /* 8×16 Terminus Bold — replaces old 8×8 font */
+
+#define FONT_W  8
+#define FONT_H 16
 
 // Convert old VGA colors to VESA 32-bit colors
 static const uint32_t vesa_palette[16] = {
@@ -64,8 +66,10 @@ void terminal_getpos(uint32_t* row, uint32_t* col) {
 }
 
 static void terminal_scroll(void) {
-    vesa_scroll();
-    term_row--;
+    /* Scroll the raw framebuffer up by one FONT_H (16px) row */
+    extern void vesa_scroll_by(uint32_t pixels);
+    vesa_scroll_by(FONT_H);
+    if (term_row > 0) term_row--;
 }
 
 void terminal_initialize(void) {
@@ -87,19 +91,11 @@ void terminal_setcolor(uint8_t color) {
 static void putentryat(char c, uint8_t color, uint32_t x, uint32_t y) {
     uint32_t bg = vesa_palette[color >> 4];
     uint32_t fg = vesa_palette[color & 0x0F];
-    
-    // Safety check for ASCII bounds
-    if ((unsigned char)c > 127) c = '?';
-    
-    const unsigned char* glyph = font8x8[(unsigned char)c];
-    
-    for (uint32_t cy = 0; cy < 8; cy++) {
-        for (uint32_t cx = 0; cx < 8; cx++) {
-            if (glyph[cy] & (1 << (7 - cx))) {
-                vesa_putpixel(x * 8 + cx, y * 8 + cy, fg);
-            } else {
-                vesa_putpixel(x * 8 + cx, y * 8 + cy, bg);
-            }
+    const unsigned char* glyph = font8x16[(unsigned char)c];
+    for (uint32_t cy = 0; cy < FONT_H; cy++) {
+        for (uint32_t cx = 0; cx < FONT_W; cx++) {
+            uint32_t color32 = (glyph[cy] & (1 << (7 - cx))) ? fg : bg;
+            vesa_putpixel(x * FONT_W + cx, y * FONT_H + cy, color32);
         }
     }
 }
@@ -109,28 +105,28 @@ void terminal_putchar(char c) {
         wm_putchar(shell_window, c);
         return;
     }
-    uint32_t vesa_cols = vesa_width / 8;
-    uint32_t vesa_rows = vesa_height / 8;
-    if (vesa_cols == 0) return; // VESA not ready
+    uint32_t cols = vesa_width  / FONT_W;   /* 8×16 font: 128 cols at 1024px */
+    uint32_t rows = vesa_height / FONT_H;   /* 8×16 font:  48 rows at 768px  */
+    if (cols == 0) return;
 
     switch (c) {
     case '\n':
         term_col = 0;
-        if (++term_row >= vesa_rows) terminal_scroll();
+        if (++term_row >= rows) terminal_scroll();
         break;
     case '\r':
         term_col = 0;
         break;
     case '\t':
         term_col = (term_col + 8) & ~(uint32_t)7;
-        if (term_col >= vesa_cols) { term_col = 0; if (++term_row >= vesa_rows) terminal_scroll(); }
+        if (term_col >= cols) { term_col = 0; if (++term_row >= rows) terminal_scroll(); }
         break;
     case '\b':
         if (term_col > 0) { --term_col; putentryat(' ', term_color, term_col, term_row); }
         break;
     default:
         putentryat(c, term_color, term_col, term_row);
-        if (++term_col >= vesa_cols) { term_col = 0; if (++term_row >= vesa_rows) terminal_scroll(); }
+        if (++term_col >= cols) { term_col = 0; if (++term_row >= rows) terminal_scroll(); }
     }
 }
 
