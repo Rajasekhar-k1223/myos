@@ -4,6 +4,8 @@
 #include "kheap.h"
 #include "string.h"
 #include "font.h"
+#include "rtc.h"
+#include "pit.h"
 
 #define MAX_WINDOWS 10
 
@@ -14,6 +16,9 @@ static int redraw_needed = 1;
 static int drag_win_idx = -1;
 static int drag_off_x = 0;
 static int drag_off_y = 0;
+
+static char clock_str[20] = "";
+static uint32_t last_clock_ticks = 0;
 
 static const uint32_t cursor_bitmap[15][10] = {
     {1,0,0,0,0,0,0,0,0,0},
@@ -157,7 +162,25 @@ static void wm_render(void) {
         }
     }
     
-    // 3. Draw Mouse
+    // 3. Draw Taskbar
+    vesa_draw_rect(0, vesa_height - 30, vesa_width, 30, 0xC0C0C0);
+    vesa_draw_rect(0, vesa_height - 30, vesa_width, 2, 0xFFFFFF); // 3D highlight top edge
+    
+    // Start Button
+    vesa_draw_rect(5, vesa_height - 25, 60, 20, 0x008000); // Green
+    vesa_draw_rect(5, vesa_height - 25, 60, 2, 0x00FF00); // Highlight
+    vesa_draw_rect(5, vesa_height - 25, 2, 20, 0x00FF00); // Highlight
+    wm_draw_string(15, vesa_height - 19, "START", 0xFFFFFF);
+    
+    // Clock Box (Inset 3D)
+    vesa_draw_rect(vesa_width - 160, vesa_height - 25, 150, 20, 0xA0A0A0);
+    vesa_draw_rect(vesa_width - 160, vesa_height - 25, 150, 2, 0x808080); // inner shadow top
+    vesa_draw_rect(vesa_width - 160, vesa_height - 25, 2, 20, 0x808080); // inner shadow left
+    vesa_draw_rect(vesa_width - 160, vesa_height - 7, 150, 2, 0xFFFFFF); // inner highlight bottom
+    vesa_draw_rect(vesa_width - 12, vesa_height - 25, 2, 20, 0xFFFFFF); // inner highlight right
+    wm_draw_string(vesa_width - 150, vesa_height - 19, clock_str, 0x000000);
+    
+    // 4. Draw Mouse
     int mx = mouse_get_x();
     int my = mouse_get_y();
     for (int y = 0; y < 15; y++) {
@@ -167,11 +190,19 @@ static void wm_render(void) {
         }
     }
     
-    // 4. Swap!
+    // 5. Swap!
     vesa_swap_buffers();
 }
 
 void wm_process_events(void) {
+    // 0. Update Clock
+    uint32_t current_ticks = pit_get_ticks();
+    if (current_ticks - last_clock_ticks >= 100 || clock_str[0] == '\0') {
+        rtc_datetime_str(clock_str);
+        last_clock_ticks = current_ticks;
+        redraw_needed = 1;
+    }
+
     int mx = mouse_get_x();
     int my = mouse_get_y();
     uint8_t btns = mouse_get_buttons();
