@@ -27,6 +27,11 @@ void vesa_putpixel(uint32_t x, uint32_t y, uint32_t color) {
     fb[(y * (fb_pitch / 4)) + x] = color;
 }
 
+uint32_t vesa_getpixel(uint32_t x, uint32_t y) {
+    if (!fb || x >= vesa_width || y >= vesa_height) return 0;
+    return fb[(y * (fb_pitch / 4)) + x];
+}
+
 void vesa_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     for (uint32_t i = 0; i < h; i++) {
         for (uint32_t j = 0; j < w; j++) {

@@ -17,6 +17,7 @@
 #include "shell.h"
 #include "io.h"
 #include "bmp.h"
+#include "mouse.h"
 
 /* ── VESA Terminal Driver ────────────────────────────────────────────────── */
 #include "font.h"
@@ -257,9 +258,12 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     boot_ok("PIT", "100 Hz system timer (IRQ0)");
 
     keyboard_init();
-    boot_ok("KBD", "PS/2 keyboard driver ready (IRQ1)");
+    boot_ok("KBD", "PS/2 Keyboard Driver Ready");
 
-    /* ── Memory ── */
+    mouse_init();
+    boot_ok("MOU", "PS/2 Mouse Driver Ready (IRQ12)");
+
+    /* ── Memory Subsystem ── */
     boot_section("Memory Subsystem");
 
     pmm_init(mbi);
@@ -277,7 +281,7 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     kheap_init();
     boot_ok("HEP", "1 MB kernel heap initialized");
 
-    /* ── Clock ── */
+    /* ── Real-Time Clock ── */
     boot_section("Real-Time Clock");
     {
         char dt[20];
