@@ -40,6 +40,7 @@ extern void irq6(void);  extern void irq7(void);  extern void irq8(void);
 extern void irq9(void);  extern void irq10(void); extern void irq11(void);
 extern void irq12(void); extern void irq13(void); extern void irq14(void);
 extern void irq15(void);
+extern void isr128(void);
 
 #define PIC1_CMD   0x20
 #define PIC1_DATA  0x21
@@ -92,6 +93,8 @@ void idt_init(void) {
     SET(40, irq8);  SET(41, irq9);  SET(42, irq10); SET(43, irq11);
     SET(44, irq12); SET(45, irq13); SET(46, irq14); SET(47, irq15);
 #undef SET
+
+    idt_set_gate(128, (uint32_t)isr128, 0x08, 0xEE);
 
     __asm__ volatile ("lidt (%0)" : : "r"(&idtp));
     __asm__ volatile ("sti");

@@ -14,3 +14,9 @@ gdt_flush:
     ljmp $0x08, $.Lflush /* 0x08 = kernel code selector (GDT entry 1 * 8) */
 .Lflush:
     ret
+
+.global tss_flush
+tss_flush:
+    mov $0x2B, %ax      /* Load index 5 (0x28) + 3 (RPL=3) into task register */
+    ltr %ax
+    ret

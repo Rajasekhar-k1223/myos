@@ -313,12 +313,22 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     pit_enable_scheduling();
     boot_ok("SCH", "Preemptive scheduler active — 20 ms time slice (2 ticks)");
 
+    /* ── User Mode ── */
+    boot_section("User Mode & Syscalls");
+#include "syscall.h"
+#include "user.h"
+    syscall_init();
+    boot_ok("SYS", "INT 0x80 System Call Interface registered");
+    boot_ok("USR", "Jumping to Ring 3 User Space...");
+
     /* ── Close boot box ── */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
     hline(BOX_BL, '\xCD', BOX_BR);
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     terminal_putchar('\n');
 
+    enter_user_mode();
+
     /* ── Shell (runs as task 0) ── */
-    shell_init();
+    // shell_init();
 }
