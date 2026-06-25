@@ -99,7 +99,7 @@ static void cmd_info(void) {
          terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK)); \
          terminal_printf(fmt "\n", ##__VA_ARGS__); } while(0)
 
-    ROW("OS",          "myOS v0.7");
+    ROW("OS",          "ElseaOS v1.0");
     ROW("Architecture","i686 32-bit protected mode");
     ROW("User",        "%s", username);
     ROW("Date/Time",   "%s", dt);

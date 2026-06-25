@@ -14,6 +14,16 @@ typedef struct {
     /* Text buffer — non-NULL for Notepad windows; tracks raw typed text */
     char*    text_buf;
     uint32_t text_len;
+    int      minimized;
+    int      maximized;
+    /* Saved geometry for maximize/restore */
+    uint32_t orig_x, orig_y, orig_w, orig_h;
+    /* Terminal Scrollback */
+    char*    term_grid;
+    uint32_t term_cols;
+    uint32_t term_rows;
+    uint32_t term_line;
+    int      term_scroll;
 } window_t;
 
 typedef struct {
@@ -39,3 +49,4 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
 void wm_draw_string_window(window_t* win, uint32_t x, uint32_t y, const char* str, uint32_t fg);
 void wm_putchar(window_t* win, char c);
 void wm_process_events(void);
+void wm_toast(const char* msg, uint32_t duration_ticks);

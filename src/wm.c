@@ -158,8 +158,23 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
     win->fg_color = 0xAAAAAA;
     win->bg_color = 0x000000;
     win->alpha = (strncmp(title, "Terminal", 8) == 0) ? 210 : 255;
-    win->text_buf = NULL;
-    win->text_len = 0;
+    win->text_buf  = NULL;
+    win->text_len  = 0;
+    win->minimized = 0;
+    win->maximized = 0;
+    win->orig_x = x; win->orig_y = y;
+    win->orig_w = w; win->orig_h = h;
+    
+    if (strncmp(title, "Terminal", 8) == 0) {
+        win->term_cols = w / 8;
+        win->term_rows = 256;
+        win->term_line = 0;
+        win->term_scroll = 0;
+        win->term_grid = (char*)kmalloc(win->term_rows * win->term_cols);
+        memset(win->term_grid, ' ', win->term_rows * win->term_cols);
+    } else {
+        win->term_grid = NULL;
+    }
 
     focused_window = win;
     
@@ -275,6 +290,15 @@ int wm_handle_shortcut(char key) {
                              (const uint8_t*)focused_window->text_buf,
                              focused_window->text_len);
             speaker_beep(880, 80);
+            /* Show toast: "Saved: <fname>" */
+            char tmsg[64];
+            int ti = 0;
+            const char* pfx = "Saved: ";
+            while (*pfx) tmsg[ti++] = *pfx++;
+            const char* fn = fname;
+            while (*fn && ti < 62) tmsg[ti++] = *fn++;
+            tmsg[ti] = '\0';
+            wm_toast(tmsg, 200);
         }
         return 1;
     }
@@ -289,6 +313,9 @@ int wm_handle_shortcut(char key) {
                 memcpy(np->text_buf, load_buf, (uint32_t)r + 1);
                 wm_notepad_reload(np, load_buf, (uint32_t)r);
             }
+            wm_toast("Loaded: notes.txt", 200);
+        } else {
+            wm_toast("File not found: notes.txt", 150);
         }
         redraw_needed = 1;
         return 1;
@@ -315,7 +342,54 @@ int wm_handle_shortcut(char key) {
         redraw_needed = 1;
         return 1;
     }
+    if (key == 17) { // Page Up
+        if (focused_window && focused_window->term_grid) {
+            focused_window->term_scroll += 5;
+            wm_redraw_term(focused_window);
+            return 1;
+        }
+    }
+    if (key == 18) { // Page Down
+        if (focused_window && focused_window->term_grid) {
+            focused_window->term_scroll -= 5;
+            if (focused_window->term_scroll < 0) focused_window->term_scroll = 0;
+            wm_redraw_term(focused_window);
+            return 1;
+        }
+    }
     return 0;
+}
+
+void wm_redraw_term(window_t* win) {
+    if (!win->term_grid) return;
+    // Clear buffer
+    for (uint32_t i = 0; i < win->w * win->h; i++) win->buffer[i] = win->bg_color;
+    
+    int lines_visible = win->h / 16;
+    int start_line = win->term_line - lines_visible + 1 - win->term_scroll;
+    if (start_line < 0) start_line = 0;
+    
+    int draw_y = 0;
+    for (int y = start_line; y <= (int)win->term_line && draw_y < lines_visible; y++) {
+        for (uint32_t x = 0; x < win->term_cols; x++) {
+            char c = win->term_grid[y * win->term_cols + x];
+            if (c >= ' ') {
+                unsigned char uc = (unsigned char)c;
+                for (int row = 0; row < 16; row++) {
+                    uint8_t row_data = font8x16[uc][row];
+                    for (int col = 0; col < 8; col++) {
+                        if (row_data & (1 << (7 - col))) {
+                            if ((uint32_t)(draw_y * 16 + row) < win->h && (uint32_t)(x * 8 + col) < win->w) {
+                                win->buffer[(draw_y * 16 + row) * win->w + (x * 8 + col)] = win->fg_color;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        draw_y++;
+    }
+    redraw_needed = 1;
 }
 
 void wm_putchar(window_t* win, char c) {
@@ -329,6 +403,47 @@ void wm_putchar(window_t* win, char c) {
             win->text_buf[win->text_len++] = c;
             win->text_buf[win->text_len]   = '\0';
         }
+    }
+
+    if (win->term_grid) {
+        if (c == '\b') {
+            if (win->cursor_x >= 8) {
+                win->cursor_x -= 8;
+                int term_x = win->cursor_x / 8;
+                win->term_grid[win->term_line * win->term_cols + term_x] = ' ';
+            }
+        } else if (c == '\n') {
+            win->cursor_x = 0;
+            win->term_line++;
+            if (win->term_line >= win->term_rows) {
+                memmove(win->term_grid, win->term_grid + win->term_cols, (win->term_rows - 1) * win->term_cols);
+                memset(win->term_grid + (win->term_rows - 1) * win->term_cols, ' ', win->term_cols);
+                win->term_line--;
+            }
+        } else if (c == '\r') {
+            win->cursor_x = 0;
+        } else if (c >= ' ') {
+            int term_x = win->cursor_x / 8;
+            if (term_x < (int)win->term_cols) {
+                win->term_grid[win->term_line * win->term_cols + term_x] = c;
+            }
+            win->cursor_x += 8;
+        }
+        
+        if ((uint32_t)win->cursor_x >= win->w) {
+            win->cursor_x = 0;
+            win->term_line++;
+            if (win->term_line >= win->term_rows) {
+                memmove(win->term_grid, win->term_grid + win->term_cols, (win->term_rows - 1) * win->term_cols);
+                memset(win->term_grid + (win->term_rows - 1) * win->term_cols, ' ', win->term_cols);
+                win->term_line--;
+            }
+        }
+        
+        // If we are at the bottom, reset scroll_y so it tracks
+        win->term_scroll = 0;
+        wm_redraw_term(win);
+        return;
     }
 
     if (c == '\n') {
@@ -377,6 +492,50 @@ void wm_putchar(window_t* win, char c) {
     redraw_needed = 1;
 }
 
+/* ─── Toast notification ─────────────────────────────────────────────── */
+static char     toast_msg[80]  = "";
+static uint32_t toast_until    = 0;
+
+void wm_toast(const char* msg, uint32_t duration_ticks) {
+    strncpy(toast_msg, msg, 79);
+    toast_msg[79] = '\0';
+    toast_until = pit_get_ticks() + duration_ticks;
+    redraw_needed = 1;
+}
+
+/* ─── Resize / Maximize helpers ──────────────────────────────────────── */
+static void wm_do_resize(window_t* w, uint32_t new_w, uint32_t new_h) {
+    uint32_t* nb = (uint32_t*)kmalloc(new_w * new_h * 4);
+    if (!nb) return;
+    for (uint32_t yy = 0; yy < new_h; yy++)
+        for (uint32_t xx = 0; xx < new_w; xx++)
+            nb[yy * new_w + xx] = (xx < w->w && yy < w->h)
+                                   ? w->buffer[yy * w->w + xx]
+                                   : w->bg_color;
+    kfree(w->buffer);
+    w->buffer = nb;
+    w->w = new_w;
+    w->h = new_h;
+}
+
+static void wm_maximize_toggle(window_t* w) {
+    extern uint32_t vesa_width, vesa_height;
+    if (!w->maximized) {
+        w->orig_x = w->x; w->orig_y = w->y;
+        w->orig_w = w->w; w->orig_h = w->h;
+        w->x = 0;
+        w->y = 24;
+        wm_do_resize(w, vesa_width, vesa_height - 84);
+        w->maximized = 1;
+    } else {
+        w->x = w->orig_x;
+        w->y = w->orig_y;
+        wm_do_resize(w, w->orig_w, w->orig_h);
+        w->maximized = 0;
+    }
+    redraw_needed = 1;
+}
+
 static void wm_render(void) {
     extern uint32_t vesa_width, vesa_height;
     
@@ -393,18 +552,26 @@ static void wm_render(void) {
     // 2. Draw Windows
     for (int i = 0; i < num_windows; i++) {
         window_t* w = &windows[i];
-        if (!w->active) continue;
-        
+        if (!w->active || w->minimized) continue;
+
         // Window Border (1px flat)
         vesa_draw_rect_alpha(w->x - 1, w->y - 1, w->w + 2, w->h + 22, current_theme.window_border, w->alpha);
         // Window Title bar (20px high)
         vesa_draw_rect_alpha(w->x, w->y, w->w, 20, (w == focused_window) ? current_theme.title_bg : current_theme.title_inactive_bg, w->alpha);
         wm_draw_string(w->x + 5, w->y + 2, w->title, current_theme.title_fg);
-        
-        // Close Button (Modern Flat)
+
+        // Maximize button (green □ — or ❐ when already maximized)
+        vesa_draw_rect_alpha(w->x + w->w - 58, w->y + 2, 16, 16, 0x007700, w->alpha);
+        wm_draw_string(w->x + w->w - 55, w->y + 6, w->maximized ? "v" : "^", 0xFFFFFF);
+
+        // Minimize button (yellow _ )
+        vesa_draw_rect_alpha(w->x + w->w - 38, w->y + 2, 16, 16, 0xC09000, w->alpha);
+        wm_draw_string(w->x + w->w - 35, w->y + 6, "_", 0xFFFFFF);
+
+        // Close button (red x)
         vesa_draw_rect_alpha(w->x + w->w - 18, w->y + 2, 16, 16, 0xC00000, w->alpha);
         wm_draw_string(w->x + w->w - 14, w->y + 6, "x", 0xFFFFFF);
-        
+
         // Draw the inner buffer with Alpha Transparency
         for (uint32_t yy = 0; yy < w->h; yy++) {
             for (uint32_t xx = 0; xx < w->w; xx++) {
@@ -423,7 +590,31 @@ static void wm_render(void) {
             }
         }
     }
-    
+
+    // 2.5 Draw Minimized Window Taskbar (strip above dock)
+    {
+        int strip_y = (int)vesa_height - 50 - 10 - 26; /* just above dock */
+        int strip_x = 10;
+        int any_minimized = 0;
+        for (int i = 0; i < num_windows; i++) {
+            window_t* w = &windows[i];
+            if (!w->active || !w->minimized) continue;
+            any_minimized = 1;
+            /* Draw a compact title pill */
+            int btn_w = 120;
+            vesa_draw_rect((uint32_t)strip_x, (uint32_t)strip_y, (uint32_t)btn_w, 22,
+                           (w == focused_window) ? current_theme.title_bg : current_theme.title_inactive_bg);
+            /* Truncate title to ~14 chars */
+            char short_title[15];
+            strncpy(short_title, w->title, 14);
+            short_title[14] = '\0';
+            wm_draw_string((uint32_t)(strip_x + 4), (uint32_t)(strip_y + 3),
+                           short_title, current_theme.title_fg);
+            strip_x += btn_w + 4;
+        }
+        (void)any_minimized;
+    }
+
     // 3. Draw Top Bar (Modern Linux Style)
     vesa_draw_rect(0, 0, vesa_width, 24, current_theme.taskbar_bg);
     
@@ -514,7 +705,24 @@ static void wm_render(void) {
         wm_draw_string(m_x + 35, m_y + 210, "Reboot", current_theme.menu_fg);
     }
     
-    // 5. Draw Mouse
+    // 5. Draw Toast Notification
+    if (toast_msg[0] && pit_get_ticks() < toast_until) {
+        int tw = (int)strlen(toast_msg) * 8 + 20;
+        int tx = ((int)vesa_width  - tw) / 2;
+        int ty = (int)vesa_height - 50 - 10 - 50;   /* above dock */
+        vesa_draw_rect((uint32_t)tx - 2, (uint32_t)ty - 2,
+                       (uint32_t)tw + 4, 24, 0x111111);
+        vesa_draw_rect((uint32_t)tx, (uint32_t)ty,
+                       (uint32_t)tw, 20, 0x1E3A5F);
+        wm_draw_string((uint32_t)(tx + 10), (uint32_t)(ty + 2),
+                       toast_msg, 0xFFFFFF);
+        redraw_needed = 1; /* keep redrawing until expired */
+    } else if (toast_msg[0] && pit_get_ticks() >= toast_until) {
+        toast_msg[0] = '\0';
+        redraw_needed = 1;
+    }
+
+    // 6. Draw Mouse
     int mx = mouse_get_x();
     int my = mouse_get_y();
     for (int y = 0; y < 15; y++) {
@@ -523,8 +731,8 @@ static void wm_render(void) {
             else if (cursor_bitmap[y][x] == 2) vesa_putpixel(mx + x, my + y, 0xFFFFFF);
         }
     }
-    
-    // 6. Swap!
+
+    // 7. Swap!
     vesa_swap_buffers();
 }
 
@@ -664,11 +872,32 @@ void wm_process_events(void) {
             }
         }
         
+        // Check Minimized Taskbar pills first
+        if (!clicked_on_something) {
+            int strip_y = (int)vesa_height - 50 - 10 - 26;
+            int strip_x = 10;
+            for (int i = 0; i < num_windows; i++) {
+                window_t* w = &windows[i];
+                if (!w->active || !w->minimized) continue;
+                int btn_w = 120;
+                if (mx >= strip_x && mx <= strip_x + btn_w &&
+                    my >= strip_y && my <= strip_y + 22) {
+                    w->minimized = 0;
+                    focused_window = w;
+                    clicked_on_something = 1;
+                    redraw_needed = 1;
+                    speaker_beep(600, 60);
+                    break;
+                }
+                strip_x += btn_w + 4;
+            }
+        }
+
         // Check Windows (Iterate backwards / top-most first)
         if (!clicked_on_something && !start_menu_open) {
             for (int i = num_windows - 1; i >= 0; i--) {
                 window_t* w = &windows[i];
-                if (w->active) {
+                if (w->active && !w->minimized) {
                     // Check if click is inside window bounds
                     if (mx >= (int)(w->x - 2) && mx <= (int)(w->x + w->w + 2) &&
                         my >= (int)(w->y - 2) && my <= (int)(w->y + w->h + 20)) {
@@ -689,17 +918,35 @@ void wm_process_events(void) {
                         // Check if click is inside the Close Button (X)
                         if (mx >= (int)(w->x + w->w - 18) && mx <= (int)(w->x + w->w - 2) &&
                             my >= (int)(w->y + 2) && my <= (int)(w->y + 18)) {
-                            speaker_beep(2000, 10); // UI Click sound!
-                            w->active = 0; // Close the window
+                            speaker_beep(2000, 10);
+                            w->active = 0;
                             extern window_t* shell_window;
-                            if (shell_window == w) {
-                                shell_window = 0; // Safely disconnect shell output
-                            }
+                            if (shell_window == w) shell_window = 0;
                             clicked_on_something = 1;
                             redraw_needed = 1;
                             break;
                         }
-                        
+
+                        // Check if click is inside the Maximize Button (^/v)
+                        if (mx >= (int)(w->x + w->w - 58) && mx <= (int)(w->x + w->w - 42) &&
+                            my >= (int)(w->y + 2) && my <= (int)(w->y + 18)) {
+                            wm_maximize_toggle(w);
+                            speaker_beep(700, 60);
+                            clicked_on_something = 1;
+                            break;
+                        }
+
+                        // Check if click is inside the Minimize Button (_)
+                        if (mx >= (int)(w->x + w->w - 38) && mx <= (int)(w->x + w->w - 22) &&
+                            my >= (int)(w->y + 2) && my <= (int)(w->y + 18)) {
+                            speaker_beep(600, 60);
+                            w->minimized = 1;
+                            if (focused_window == w) focused_window = NULL;
+                            clicked_on_something = 1;
+                            redraw_needed = 1;
+                            break;
+                        }
+
                         // Check if click is inside the Resize Handle
                         if (mx >= (int)(w->x + w->w - 12) && mx <= (int)(w->x + w->w) &&
                             my >= (int)(w->y + 20 + w->h - 12) && my <= (int)(w->y + 20 + w->h)) {
@@ -710,8 +957,9 @@ void wm_process_events(void) {
                             break;
                         }
                     
-                    // Check if click is inside the title bar (for dragging)
-                    if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                    // Check if click is inside the title bar (for dragging, skip when maximized)
+                    if (!w->maximized &&
+                        mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
                         my >= (int)w->y && my <= (int)(w->y + 20)) {
                         drag_win_idx = i;
                         drag_off_x = mx - w->x;

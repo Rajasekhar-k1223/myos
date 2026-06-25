@@ -45,6 +45,17 @@ static void keyboard_callback(struct registers* regs) {
 
     if (sc & 0x80) return; /* ignore all other key-release events */
 
+    if (sc == 0x49) { // Page Up
+        extern int wm_handle_shortcut(char c);
+        wm_handle_shortcut(17);
+        return;
+    }
+    if (sc == 0x51) { // Page Down
+        extern int wm_handle_shortcut(char c);
+        wm_handle_shortcut(18);
+        return;
+    }
+
     if (sc < sizeof(sc_ascii)) {
         char c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];
         if (c) {
