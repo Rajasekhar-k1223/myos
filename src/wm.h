@@ -18,6 +18,8 @@ typedef struct {
     int      maximized;
     /* Saved geometry for maximize/restore */
     uint32_t orig_x, orig_y, orig_w, orig_h;
+    /* Virtual desktop this window lives on (0-3) */
+    int      desktop_id;
     /* Terminal Scrollback */
     char*    term_grid;
     uint32_t term_cols;

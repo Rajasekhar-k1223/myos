@@ -47,6 +47,12 @@ static window_t* resizing_window = 0;
 static int resize_off_x = 0;
 static int resize_off_y = 0;
 
+static window_t* scrollbar_win    = NULL; /* window whose scrollbar is being dragged */
+static int       scrollbar_track_y = 0;   /* screen-y of the scrollbar track top     */
+static int       scrollbar_track_h = 0;   /* height of the track in pixels           */
+
+#define SB_W 10  /* scrollbar width in pixels */
+
 static char clock_str[20] = "";
 static uint32_t last_clock_ticks = 0;
 
@@ -56,6 +62,10 @@ static int start_btn_pressed = 0;
 /* System clipboard */
 static char     clipboard_buf[8192];
 static uint32_t clipboard_len = 0;
+
+/* Virtual desktops */
+#define NUM_DESKTOPS 4
+static int current_desktop = 0;
 
 /* Right-click context menu */
 static int  ctx_menu_open = 0;
@@ -124,6 +134,7 @@ static uint32_t icon_term_buf[32 * 32];
 static uint32_t icon_expl_buf[32 * 32];
 static uint32_t icon_sett_buf[32 * 32];
 static uint32_t icon_pnt_buf[32 * 32];
+static uint32_t cursor_buf[16 * 16];
 
 void wm_init(void) {
     extern uint32_t vesa_width, vesa_height;
@@ -149,10 +160,12 @@ void wm_init(void) {
     memset(icon_expl_buf, 0, sizeof(icon_expl_buf));
     memset(icon_sett_buf, 0, sizeof(icon_sett_buf));
     memset(icon_pnt_buf,  0, sizeof(icon_pnt_buf));
+    memset(cursor_buf,    0, sizeof(cursor_buf));
     bmp_load_to_buffer("icon_term.bmp", icon_term_buf, 32, 32, 0, 0);
     bmp_load_to_buffer("icon_expl.bmp", icon_expl_buf, 32, 32, 0, 0);
     bmp_load_to_buffer("icon_sett.bmp", icon_sett_buf, 32, 32, 0, 0);
     bmp_load_to_buffer("icon_pnt.bmp",  icon_pnt_buf,  32, 32, 0, 0);
+    bmp_load_to_buffer("cursor.bmp",    cursor_buf,    16, 16, 0, 0);
     
     // Create initial terminal
     extern window_t* shell_window;
@@ -199,12 +212,13 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
     win->fg_color = 0xAAAAAA;
     win->bg_color = 0x000000;
     win->alpha = (strncmp(title, "Terminal", 8) == 0) ? 210 : 255;
-    win->text_buf  = NULL;
-    win->text_len  = 0;
-    win->minimized = 0;
-    win->maximized = 0;
+    win->text_buf   = NULL;
+    win->text_len   = 0;
+    win->minimized  = 0;
+    win->maximized  = 0;
     win->orig_x = x; win->orig_y = y;
     win->orig_w = w; win->orig_h = h;
+    win->desktop_id = current_desktop;
     
     if (strncmp(title, "Terminal", 8) == 0) {
         win->term_cols = w / 8;
@@ -436,6 +450,32 @@ int wm_handle_shortcut(char key) {
         }
         return 1;
     }
+    /* Ctrl+1..4 — switch virtual desktop */
+    if (key >= '1' && key <= '0' + NUM_DESKTOPS) {
+        int target = key - '1';
+        if (target != current_desktop) {
+            current_desktop = target;
+            /* Deselect focused window if it lives on another desktop */
+            if (focused_window && focused_window->desktop_id != current_desktop)
+                focused_window = NULL;
+            /* Re-focus top-most window on new desktop */
+            if (!focused_window) {
+                for (int i = num_windows - 1; i >= 0; i--) {
+                    if (windows[i].active && !windows[i].minimized &&
+                        windows[i].desktop_id == current_desktop) {
+                        focused_window = &windows[i];
+                        break;
+                    }
+                }
+            }
+            char tmsg[24];
+            sprintf(tmsg, "Desktop %d", current_desktop + 1);
+            wm_toast(tmsg, 100);
+            redraw_needed = 1;
+        }
+        return 1;
+    }
+    /* Ctrl+Shift equivalent: move focused window to desktop (use F1-F4 via key codes) */
     return 0;
 }
 
@@ -628,10 +668,11 @@ static void wm_render(void) {
     
     // 1.5 Draw Desktop Icons (Removed for Modern Dock)
     
-    // 2. Draw Windows
+    // 2. Draw Windows (current desktop only)
     for (int i = 0; i < num_windows; i++) {
         window_t* w = &windows[i];
         if (!w->active || w->minimized) continue;
+        if (w->desktop_id != current_desktop) continue;
 
         // Window Border (1px flat)
         vesa_draw_rect_alpha(w->x - 1, w->y - 1, w->w + 2, w->h + 22, current_theme.window_border, w->alpha);
@@ -658,6 +699,31 @@ static void wm_render(void) {
             }
         }
         
+        // Draw Scrollbar for Terminal windows with scrollable content
+        if (w->term_grid) {
+            int total_lines   = (int)w->term_line + 1;
+            int visible_lines = (int)w->h / 16;
+            if (total_lines > visible_lines) {
+                int sb_x  = (int)(w->x + w->w) - SB_W;
+                int sb_y  = (int)(w->y) + 20;
+                int sb_h  = (int)w->h;
+                /* Track */
+                vesa_draw_rect((uint32_t)sb_x, (uint32_t)sb_y, SB_W, (uint32_t)sb_h, 0x222233);
+                /* Thumb */
+                int max_scroll = total_lines - visible_lines;
+                int thumb_h = sb_h * visible_lines / total_lines;
+                if (thumb_h < 12) thumb_h = 12;
+                int scroll_clamped = w->term_scroll;
+                if (scroll_clamped > max_scroll) scroll_clamped = max_scroll;
+                /* scroll=0→ bottom, scroll=max→ top; invert for thumb_y */
+                int thumb_y = sb_y;
+                if (max_scroll > 0)
+                    thumb_y = sb_y + (sb_h - thumb_h) * (max_scroll - scroll_clamped) / max_scroll;
+                vesa_draw_rect((uint32_t)(sb_x + 1), (uint32_t)(thumb_y + 1),
+                               SB_W - 2, (uint32_t)(thumb_h - 2), 0x7799BB);
+            }
+        }
+
         // Draw Resize Handle
         vesa_draw_rect(w->x + w->w - 12, w->y + 20 + w->h - 12, 12, 12, current_theme.title_bg);
         
@@ -677,9 +743,9 @@ static void wm_render(void) {
         int btn_w   = 140;
         int max_btns = ((int)vesa_width - 20) / (btn_w + 4);
         int count = 0;
-        /* Count active windows */
+        /* Count active windows on this desktop */
         for (int i = 0; i < num_windows; i++)
-            if (windows[i].active) count++;
+            if (windows[i].active && windows[i].desktop_id == current_desktop) count++;
         if (count > 0) {
             /* Dark background bar */
             vesa_draw_rect(0, (uint32_t)strip_y, vesa_width, (uint32_t)strip_h,
@@ -687,7 +753,7 @@ static void wm_render(void) {
             int strip_x = 10;
             for (int i = 0; i < num_windows && i < max_btns; i++) {
                 window_t* w = &windows[i];
-                if (!w->active) continue;
+                if (!w->active || w->desktop_id != current_desktop) continue;
                 uint32_t bg;
                 if (w == focused_window && !w->minimized)
                     bg = current_theme.title_bg;          /* focused */
@@ -730,6 +796,25 @@ static void wm_render(void) {
     
     // Centered Clock
     wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
+
+    // Desktop indicator dots (top-right)
+    {
+        int dot_size = 12;
+        int dot_gap  = 4;
+        int total_w  = NUM_DESKTOPS * (dot_size + dot_gap) - dot_gap;
+        int dx = (int)vesa_width - total_w - 8;
+        int dy = 6;
+        for (int d = 0; d < NUM_DESKTOPS; d++) {
+            uint32_t col = (d == current_desktop) ? 0xFFFFFF : 0x556677;
+            /* Count windows on this desktop */
+            int has_wins = 0;
+            for (int wi = 0; wi < num_windows; wi++)
+                if (windows[wi].active && windows[wi].desktop_id == d) { has_wins = 1; break; }
+            if (has_wins && d != current_desktop) col = 0x88AACC;
+            vesa_draw_rect((uint32_t)(dx + d * (dot_size + dot_gap)),
+                           (uint32_t)dy, (uint32_t)dot_size, (uint32_t)dot_size, col);
+        }
+    }
     
     // Bottom Dock (Modern floating launcher)
     int dock_w = 800;
@@ -881,10 +966,12 @@ static void wm_render(void) {
     // 7. Draw Mouse
     int mx = mouse_get_x();
     int my = mouse_get_y();
-    for (int y = 0; y < 15; y++) {
-        for (int x = 0; x < 10; x++) {
-            if (cursor_bitmap[y][x] == 1) vesa_putpixel(mx + x, my + y, 0x000000);
-            else if (cursor_bitmap[y][x] == 2) vesa_putpixel(mx + x, my + y, 0xFFFFFF);
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+            uint32_t col = cursor_buf[y * 16 + x];
+            if (col != 0) { // Black is treated as transparent in our simple implementation
+                vesa_putpixel_alpha(mx + x, my + y, col, 255);
+            }
         }
     }
 
@@ -958,6 +1045,40 @@ void wm_process_events(void) {
             }
             /* clicking outside the menu just closes it */
             clicked_on_something = 1;
+        }
+
+        // Check desktop indicator dot clicks (top-right of top bar)
+        if (!clicked_on_something && my >= 0 && my <= 24) {
+            int dot_size = 12;
+            int dot_gap  = 4;
+            int total_w  = NUM_DESKTOPS * (dot_size + dot_gap) - dot_gap;
+            int dot_base_x = (int)vesa_width - total_w - 8;
+            for (int d = 0; d < NUM_DESKTOPS; d++) {
+                int dx = dot_base_x + d * (dot_size + dot_gap);
+                if (mx >= dx && mx <= dx + dot_size) {
+                    if (d != current_desktop) {
+                        current_desktop = d;
+                        if (focused_window && focused_window->desktop_id != current_desktop)
+                            focused_window = NULL;
+                        /* Re-focus top window on new desktop */
+                        if (!focused_window) {
+                            for (int i = num_windows - 1; i >= 0; i--) {
+                                if (windows[i].active && !windows[i].minimized &&
+                                    windows[i].desktop_id == current_desktop) {
+                                    focused_window = &windows[i];
+                                    break;
+                                }
+                            }
+                        }
+                        char tmsg[24];
+                        sprintf(tmsg, "Desktop %d", current_desktop + 1);
+                        wm_toast(tmsg, 100);
+                        redraw_needed = 1;
+                    }
+                    clicked_on_something = 1;
+                    break;
+                }
+            }
         }
 
         // Check Top Bar "Activities" click
@@ -1119,7 +1240,7 @@ void wm_process_events(void) {
         if (!clicked_on_something && !start_menu_open) {
             for (int i = num_windows - 1; i >= 0; i--) {
                 window_t* w = &windows[i];
-                if (w->active && !w->minimized) {
+                if (w->active && !w->minimized && w->desktop_id == current_desktop) {
                     // Check if click is inside window bounds
                     if (mx >= (int)(w->x - 2) && mx <= (int)(w->x + w->w + 2) &&
                         my >= (int)(w->y - 2) && my <= (int)(w->y + w->h + 20)) {
@@ -1137,6 +1258,33 @@ void wm_process_events(void) {
                             i = num_windows - 1; // update i so drag_win_idx gets right value
                         }
                         
+                        // Check if click is on Terminal scrollbar track
+                        if (w->term_grid) {
+                            int total_l   = (int)w->term_line + 1;
+                            int visible_l = (int)w->h / 16;
+                            if (total_l > visible_l) {
+                                int sb_x = (int)(w->x + w->w) - SB_W;
+                                int sb_y = (int)(w->y) + 20;
+                                int sb_h = (int)w->h;
+                                if (mx >= sb_x && mx <= sb_x + SB_W &&
+                                    my >= sb_y && my <= sb_y + sb_h) {
+                                    int max_s = total_l - visible_l;
+                                    int rel   = my - sb_y;
+                                    int ns    = max_s - rel * max_s / sb_h;
+                                    if (ns < 0) ns = 0;
+                                    if (ns > max_s) ns = max_s;
+                                    w->term_scroll    = ns;
+                                    scrollbar_win     = w;
+                                    scrollbar_track_y = sb_y;
+                                    scrollbar_track_h = sb_h;
+                                    wm_redraw_term(w);
+                                    clicked_on_something = 1;
+                                    redraw_needed = 1;
+                                    break;
+                                }
+                            }
+                        }
+
                         // Check if click is inside the Close Button (X)
                         if (mx >= (int)(w->x + w->w - 18) && mx <= (int)(w->x + w->w - 2) &&
                             my >= (int)(w->y + 2) && my <= (int)(w->y + 18)) {
@@ -1319,7 +1467,7 @@ void wm_process_events(void) {
         if (!start_menu_open) {
             for (int i = num_windows - 1; i >= 0; i--) {
                 window_t* w = &windows[i];
-                if (w->active && !w->minimized) {
+                if (w->active && !w->minimized && w->desktop_id == current_desktop) {
                     if (mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
                         my >= (int)(w->y) && my <= (int)(w->y + w->h + 20)) {
                         focused_window = w;
@@ -1380,9 +1528,28 @@ void wm_process_events(void) {
         }
     }
 
+    /* Scrollbar drag: update while held, clear on release */
+    if (left_click_held && scrollbar_win && scrollbar_track_h > 0) {
+        int total_l   = (int)scrollbar_win->term_line + 1;
+        int visible_l = (int)scrollbar_win->h / 16;
+        int max_s     = total_l - visible_l;
+        if (max_s > 0) {
+            int rel = my - scrollbar_track_y;
+            int ns  = max_s - rel * max_s / scrollbar_track_h;
+            if (ns < 0) ns = 0;
+            if (ns > max_s) ns = max_s;
+            if (ns != scrollbar_win->term_scroll) {
+                scrollbar_win->term_scroll = ns;
+                wm_redraw_term(scrollbar_win);
+                redraw_needed = 1;
+            }
+        }
+    }
+
     if (!left_click_held) {
         drag_win_idx = -1;
         resizing_window = 0;
+        scrollbar_win = NULL;
     }
 
     last_btns = btns;
