@@ -13,6 +13,7 @@
 #include "paging.h"
 #include "kheap.h"
 #include "tar.h"
+#include "task.h"
 #include "shell.h"
 #include "io.h"
 
@@ -210,7 +211,7 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
     terminal_writestring("  __  __  _  _  ___  ___");
     terminal_setcolor(vga_entry_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
-    terminal_writestring("        myOS  v0.7\n");
+    terminal_writestring("        myOS  v0.8\n");
 
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
     terminal_writestring(BOX_V "    ");
@@ -305,12 +306,19 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
         }
     }
 
-    /* ── Footer ── */
+    /* ── Multitasking ── */
+    boot_section("Multitasking");
+    tasking_init();
+    boot_ok("TSK", "Task 0 (kernel) adopted — round-robin scheduler ready");
+    pit_enable_scheduling();
+    boot_ok("SCH", "Preemptive scheduler active — 20 ms time slice (2 ticks)");
+
+    /* ── Close boot box ── */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
     hline(BOX_BL, '\xCD', BOX_BR);
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     terminal_putchar('\n');
 
-    /* ── Shell ── */
+    /* ── Shell (runs as task 0) ── */
     shell_init();
 }

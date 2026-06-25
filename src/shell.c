@@ -5,6 +5,7 @@
 #include "pit.h"
 #include "rtc.h"
 #include "tar.h"
+#include "task.h"
 #include "io.h"
 
 /* ── Buffer / state ──────────────────────────────────────────────────────── */
@@ -59,6 +60,8 @@ static void cmd_help(void) {
         {"hexdump", "hex dump of memory  (hexdump ADDR [LEN])"},
         {"calc",    "simple arithmetic  (calc 3+5*2)"},
         {"color",   "set terminal color  (color fg bg)"},
+        {"ps",      "list running tasks"},
+        {"sleep",   "sleep N milliseconds  (sleep 500)"},
         {"reboot",  "restart the machine"},
         {"halt",    "power off / halt CPU"},
     };
@@ -212,6 +215,38 @@ static void cmd_color(const char* args) {
     terminal_writestring("  Color changed.\n");
 }
 
+static const char* task_state_str(int s) {
+    switch (s) {
+    case 0: return "RUNNING";
+    case 1: return "READY  ";
+    case 2: return "SLEEP  ";
+    case 3: return "DEAD   ";
+    default: return "?      ";
+    }
+}
+
+static void cmd_ps(void) {
+    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+    terminal_writestring("\n  PID  STATE    NAME\n");
+    terminal_setcolor(vga_entry_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
+    terminal_writestring("  ───  ───────  ────────────────\n");
+
+    uint32_t n = task_count();
+    for (uint32_t id = 0; id < MAX_TASKS; id++) {
+        if (tasks[id].state == TASK_DEAD) continue;
+        terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
+        terminal_printf("  %-4u ", tasks[id].id);
+        if (tasks[id].state == 0)
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+        else
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        terminal_printf("%-9s", task_state_str(tasks[id].state));
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        terminal_printf("%s\n", tasks[id].name);
+    }
+    terminal_printf("\n  %u task(s) total\n\n", n);
+}
+
 static void cmd_reboot(void) {
     terminal_writestring("  Rebooting...\n");
     uint8_t v = 0x02;
@@ -245,6 +280,13 @@ static void execute(void) {
     else if (strcmp(cmd, "uptime")== 0) cmd_uptime();
     else if (strcmp(cmd, "date")  == 0) cmd_date();
     else if (strcmp(cmd, "ls")    == 0) tar_ls();
+    else if (strcmp(cmd, "ps")    == 0) cmd_ps();
+    else if (strncmp(cmd, "sleep ",6) == 0) {
+        uint32_t ms = (uint32_t)strtol(cmd + 6, NULL, 10);
+        terminal_printf("  Sleeping %u ms...\n", ms);
+        task_sleep(ms);
+        terminal_writestring("  Done.\n");
+    }
     else if (strcmp(cmd, "reboot")== 0) cmd_reboot();
     else if (strcmp(cmd, "halt")  == 0) cmd_halt();
     else if (strncmp(cmd, "echo ",   5) == 0) { terminal_writestring(cmd + 5); terminal_putchar('\n'); }
