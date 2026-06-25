@@ -12,6 +12,7 @@
 #include "calc.h"
 #include "clock.h"
 #include "wallpaper.h"
+#include "paint.h"
 
 #define MAX_WINDOWS 10
 
@@ -329,7 +330,7 @@ static void wm_render(void) {
     wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
     
     // Bottom Dock (Modern floating launcher)
-    int dock_w = 500; // Expanded for Wall
+    int dock_w = 560; // Expanded for Paint
     int dock_h = 50;
     int dock_x = (vesa_width - dock_w) / 2;
     int dock_y = vesa_height - dock_h - 10;
@@ -362,6 +363,9 @@ static void wm_render(void) {
     // Wallpaper
     vesa_draw_rect(dock_x + 430, dock_y + 5, 40, 40, 0x808000);
     wm_draw_string(dock_x + 435, dock_y + 20, "Wall", 0xFFFFFF);
+    // Paint
+    vesa_draw_rect(dock_x + 490, dock_y + 5, 40, 40, 0xFF00FF);
+    wm_draw_string(dock_x + 495, dock_y + 20, "Paint", 0xFFFFFF);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
@@ -479,7 +483,7 @@ void wm_process_events(void) {
         
         // Check Dock Clicks
         if (!clicked_on_something && !start_menu_open) {
-            int dock_w = 500;
+            int dock_w = 560;
             int dock_h = 50;
             int dock_x = (vesa_width - dock_w) / 2;
             int dock_y = vesa_height - dock_h - 10;
@@ -532,6 +536,10 @@ void wm_process_events(void) {
                     // Wallpaper
                     window_t* wall_win = wm_create_window(100, 100, 220, 250, "Wallpaper Selector");
                     wallpaper_init(wall_win);
+                } else if (mx >= dock_x + 490 && mx <= dock_x + 530) {
+                    // Paint
+                    window_t* paint_win = wm_create_window(150, 100, 400, 300, "Paint");
+                    paint_init(paint_win);
                 }
             }
         }
@@ -624,6 +632,15 @@ void wm_process_events(void) {
                         break;
                     }
                     
+                    // Check if click is inside Paint
+                    if (strcmp(w->title, "Paint") == 0 &&
+                        mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
+                        my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        paint_handle_click(w, mx, my);
+                        clicked_on_something = 1;
+                        break;
+                    }
+                    
                     // Clicked inside the window body (not title/close/explorer)
                     clicked_on_something = 1;
                     redraw_needed = 1;
@@ -655,6 +672,11 @@ void wm_process_events(void) {
         windows[drag_win_idx].x = mx - drag_off_x;
         windows[drag_win_idx].y = my - drag_off_y;
         redraw_needed = 1;
+    } else if (left_click_held && drag_win_idx == -1) {
+        if (focused_window && strcmp(focused_window->title, "Paint") == 0) {
+            paint_handle_click(focused_window, mx, my);
+            redraw_needed = 1;
+        }
     }
     
     last_btns = btns;
