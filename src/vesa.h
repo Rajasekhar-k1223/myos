@@ -14,8 +14,10 @@ void vesa_swap_buffers(void);
 void vesa_draw_desktop_bg(uint32_t* bg);
 
 void vesa_putpixel(uint32_t x, uint32_t y, uint32_t color);
+void vesa_putpixel_alpha(uint32_t x, uint32_t y, uint32_t color, uint8_t alpha);
 uint32_t vesa_getpixel(uint32_t x, uint32_t y);
 void vesa_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
+void vesa_draw_rect_alpha(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color, uint8_t alpha);
 void vesa_clear(uint32_t color);
 void vesa_scroll(void);
 void vesa_scroll_by(uint32_t pixels);  /* scroll up by N pixel rows */

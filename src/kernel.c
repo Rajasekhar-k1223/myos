@@ -24,6 +24,7 @@
 #include "user.h"
 #include "ata.h"
 #include "fs.h"
+#include "fat16.h"
 #include "speaker.h"
 
 window_t* shell_window = 0;
@@ -374,6 +375,28 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
             terminal_writestring(BOX_V "  [WARN]  No RAM disk — ls/cat unavailable\n");
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        }
+    }
+
+    /* ── ATA Disk + FAT16 ── */
+    boot_section("Persistent Storage");
+    {
+        char det[64];
+        if (ata_init()) {
+            boot_ok("ATA", "Primary IDE disk detected (PIO mode)");
+            if (fat16_init()) {
+                boot_ok("FAT", "FAT16 filesystem mounted — 'fat ls/read/write' available");
+            } else {
+                terminal_setcolor(vga_entry_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK));
+                terminal_writestring(BOX_V "  [WARN]  FAT16 not found — disk may need formatting\n");
+                terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+                (void)det;
+            }
+        } else {
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+            terminal_writestring(BOX_V "  [WARN]  No ATA disk — disk commands unavailable\n");
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+            (void)det;
         }
     }
 

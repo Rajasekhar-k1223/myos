@@ -9,6 +9,7 @@
 #include "io.h"
 #include "ata.h"
 #include "fs.h"
+#include "fat16.h"
 #include "speaker.h"
 
 /* ── Buffer / state ──────────────────────────────────────────────────────── */
@@ -64,6 +65,10 @@ static void cmd_help(void) {
         {"calc",    "simple arithmetic  (calc 3+5*2)"},
         {"color",   "set terminal color  (color fg bg)"},
         {"ps",      "list running tasks"},
+        {"fat ls",  "list files on FAT16 disk"},
+        {"fat read","read a disk file  (fat read notes.txt)"},
+        {"fat write","write a disk file  (fat write hi.txt Hello!)"},
+        {"fat del", "delete a disk file  (fat del hi.txt)"},
         {"sleep",   "sleep N milliseconds  (sleep 500)"},
         {"reboot",  "restart the machine"},
         {"halt",    "power off / halt CPU"},
@@ -356,6 +361,53 @@ static void execute(void) {
         if (freq < 20 || freq > 20000) freq = 1000;
         speaker_beep(freq, 200);
         terminal_printf("  Beep at %d Hz.\n", freq);
+    }
+    else if (strcmp(cmd, "fat ls") == 0) {
+        fat16_file_info_t files[64];
+        int n = fat16_list_files(files, 64);
+        if (n < 0) {
+            terminal_writestring("  FAT16 not ready.\n");
+        } else if (n == 0) {
+            terminal_writestring("  (no files on disk)\n");
+        } else {
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+            terminal_writestring("  NAME              SIZE\n");
+            terminal_setcolor(vga_entry_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
+            terminal_writestring("  ─────────────── ────────\n");
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+            for (int i = 0; i < n; i++)
+                terminal_printf("  %-16s %u bytes\n", files[i].name, files[i].size);
+            terminal_printf("\n  %d file(s)\n", n);
+        }
+    }
+    else if (strncmp(cmd, "fat read ", 9) == 0) {
+        static uint8_t fat_rbuf[8192];
+        int r = fat16_read_file(cmd + 9, fat_rbuf, sizeof(fat_rbuf));
+        if (r < 0) {
+            terminal_writestring("  File not found.\n");
+        } else {
+            terminal_writestring((char*)fat_rbuf);
+            terminal_putchar('\n');
+        }
+    }
+    else if (strncmp(cmd, "fat write ", 10) == 0) {
+        /* fat write <name> <content> */
+        const char* p = cmd + 10;
+        char fname[16] = {0};
+        int i = 0;
+        while (*p && *p != ' ' && i < 15) fname[i++] = *p++;
+        while (*p == ' ') p++;
+        int r = fat16_write_file(fname, (const uint8_t*)p, strlen(p));
+        if (r < 0)
+            terminal_writestring("  Write failed (disk full?).\n");
+        else
+            terminal_printf("  Wrote %d bytes to '%s'.\n", r, fname);
+    }
+    else if (strncmp(cmd, "fat del ", 8) == 0) {
+        if (fat16_delete_file(cmd + 8) == 0)
+            terminal_printf("  Deleted '%s'.\n", cmd + 8);
+        else
+            terminal_writestring("  File not found.\n");
     }
     else {
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));

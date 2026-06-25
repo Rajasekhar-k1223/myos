@@ -65,6 +65,26 @@ void vesa_putpixel(uint32_t x, uint32_t y, uint32_t color) {
     }
 }
 
+void vesa_putpixel_alpha(uint32_t x, uint32_t y, uint32_t color, uint8_t alpha) {
+    if (alpha == 255) {
+        vesa_putpixel(x, y, color);
+        return;
+    }
+    if (alpha == 0 || x >= vesa_width || y >= vesa_height) return;
+    
+    uint32_t bg = vesa_getpixel(x, y);
+    
+    uint32_t rb_fg = color & 0xFF00FF;
+    uint32_t g_fg  = color & 0x00FF00;
+    uint32_t rb_bg = bg & 0xFF00FF;
+    uint32_t g_bg  = bg & 0x00FF00;
+    
+    uint32_t rb_out = ((rb_fg * alpha) + (rb_bg * (255 - alpha))) >> 8;
+    uint32_t g_out  = ((g_fg  * alpha) + (g_bg  * (255 - alpha))) >> 8;
+    
+    vesa_putpixel(x, y, (rb_out & 0xFF00FF) | (g_out & 0x00FF00));
+}
+
 uint32_t vesa_getpixel(uint32_t x, uint32_t y) {
     if (x >= vesa_width || y >= vesa_height) return 0;
     
@@ -80,6 +100,18 @@ void vesa_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t col
     for (uint32_t i = 0; i < h; i++) {
         for (uint32_t j = 0; j < w; j++) {
             vesa_putpixel(x + j, y + i, color);
+        }
+    }
+}
+
+void vesa_draw_rect_alpha(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color, uint8_t alpha) {
+    if (alpha == 255) {
+        vesa_draw_rect(x, y, w, h, color);
+        return;
+    }
+    for (uint32_t i = 0; i < h; i++) {
+        for (uint32_t j = 0; j < w; j++) {
+            vesa_putpixel_alpha(x + j, y + i, color, alpha);
         }
     }
 }

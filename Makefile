@@ -9,7 +9,7 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/task.c src/tss.c src/syscall.c src/user.c \
          src/vesa.c src/bmp.c src/mouse.c src/wm.c \
          src/snake.c src/calc.c src/clock.c src/wallpaper.c \
-         src/paint.c src/ata.c src/fs.c src/explorer.c src/speaker.c
+         src/paint.c src/ata.c src/fs.c src/fat16.c src/explorer.c src/speaker.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
@@ -26,7 +26,8 @@ elsea.bin: $(OBJS) src/linker.ld
 	$(CC) $(LDFLAGS) $(OBJS) -o $@ -lgcc
 
 disk.img:
-	dd if=/dev/zero of=disk.img bs=512 count=10000
+	dd if=/dev/zero of=disk.img bs=512 count=65536
+	mkfs.fat -F 16 -n "ELSEAOS" disk.img
 
 # Dual BIOS + UEFI bootable ISO.
 # grub-mkrescue includes i386-pc (BIOS) + x86_64-efi (UEFI) when both

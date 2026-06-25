@@ -8,7 +8,9 @@ typedef struct {
     uint32_t* buffer;
     int active;
     uint32_t cursor_x, cursor_y;
-    uint32_t fg_color, bg_color;
+    uint32_t bg_color;
+    uint32_t fg_color;
+    uint8_t alpha;
 } window_t;
 
 typedef struct {

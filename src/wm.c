@@ -3,7 +3,7 @@
 #include "vesa.h"
 #include "kheap.h"
 #include "string.h"
-#include "font.h"
+#include "font16.h"
 #include "rtc.h"
 #include "pit.h"
 #include "io.h"
@@ -154,6 +154,7 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
     win->cursor_y = 0;
     win->fg_color = 0xAAAAAA; // Default Light Gray Text
     win->bg_color = 0x000000; // Default Black Background
+    win->alpha = (strncmp(title, "Terminal", 8) == 0) ? 210 : 255;
     
     focused_window = win;
     
@@ -170,10 +171,10 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
 static void wm_draw_string(uint32_t x, uint32_t y, const char* str, uint32_t fg) {
     for (int i = 0; str[i] != '\0'; i++) {
         unsigned char c = (unsigned char)str[i];
-        for (int row = 0; row < 8; row++) {
-            uint8_t row_data = font8x8[c][row];
+        for (int row = 0; row < 16; row++) {
+            uint8_t row_data = font8x16[c][row];
             for (int col = 0; col < 8; col++) {
-                if (row_data & (1 << col)) {
+                if (row_data & (1 << (7 - col))) {
                     vesa_putpixel(x + (i * 8) + col, y + row, fg);
                 }
             }
@@ -184,10 +185,10 @@ static void wm_draw_string(uint32_t x, uint32_t y, const char* str, uint32_t fg)
 void wm_draw_string_window(window_t* win, uint32_t x, uint32_t y, const char* str, uint32_t fg) {
     for (int i = 0; str[i] != '\0'; i++) {
         unsigned char c = (unsigned char)str[i];
-        for (int row = 0; row < 8; row++) {
-            uint8_t row_data = font8x8[c][row];
+        for (int row = 0; row < 16; row++) {
+            uint8_t row_data = font8x16[c][row];
             for (int col = 0; col < 8; col++) {
-                if (row_data & (1 << col)) {
+                if (row_data & (1 << (7 - col))) {
                     if (x + (i*8) + col < win->w && y + row < win->h) {
                         win->buffer[(y + row) * win->w + (x + (i*8) + col)] = fg;
                     }
@@ -243,16 +244,15 @@ void wm_putchar(window_t* win, char c) {
     
     if (c == '\n') {
         win->cursor_x = 0;
-        win->cursor_y += 8;
+        win->cursor_y += 16;
     } else if (c == '\r') {
         win->cursor_x = 0;
     } else if (c == '\b') {
         if (win->cursor_x >= 8) {
             win->cursor_x -= 8;
-            // Clear the 8x8 character cell
-            for (int y = 0; y < 8; y++) {
+            for (int y = 0; y < 16; y++) {
                 for (int x = 0; x < 8; x++) {
-                    if (win->cursor_y + y < win->h && win->cursor_x + x < win->w) {
+                    if ((uint32_t)(win->cursor_y + y) < win->h && (uint32_t)(win->cursor_x + x) < win->w) {
                         win->buffer[(win->cursor_y + y) * win->w + (win->cursor_x + x)] = win->bg_color;
                     }
                 }
@@ -260,10 +260,10 @@ void wm_putchar(window_t* win, char c) {
         }
     } else if (c >= ' ') {
         unsigned char uc = (unsigned char)c;
-        for (int row = 0; row < 8; row++) {
-            uint8_t row_data = font8x8[uc][row];
+        for (int row = 0; row < 16; row++) {
+            uint8_t row_data = font8x16[uc][row];
             for (int col = 0; col < 8; col++) {
-                if ((row_data & (1 << col)) && (win->cursor_y + row < win->h) && (win->cursor_x + col < win->w)) {
+                if ((row_data & (1 << (7 - col))) && ((uint32_t)(win->cursor_y + row) < win->h) && ((uint32_t)(win->cursor_x + col) < win->w)) {
                     win->buffer[(win->cursor_y + row) * win->w + (win->cursor_x + col)] = win->fg_color;
                 }
             }
@@ -272,20 +272,18 @@ void wm_putchar(window_t* win, char c) {
     }
 
     // Wrap horizontally
-    if (win->cursor_x >= win->w) {
+    if ((uint32_t)win->cursor_x >= win->w) {
         win->cursor_x = 0;
-        win->cursor_y += 8;
+        win->cursor_y += 16;
     }
-    
+
     // Scroll vertically if needed
-    if (win->cursor_y + 8 > win->h) {
-        // Shift everything up by 8 lines
-        memcpy(win->buffer, win->buffer + (win->w * 8), (win->h - 8) * win->w * 4);
-        // Clear bottom 8 lines
-        for (uint32_t i = (win->h - 8) * win->w; i < win->h * win->w; i++) {
+    if ((uint32_t)(win->cursor_y + 16) > win->h) {
+        memcpy(win->buffer, win->buffer + (win->w * 16), (win->h - 16) * win->w * 4);
+        for (uint32_t i = (win->h - 16) * win->w; i < win->h * win->w; i++) {
             win->buffer[i] = win->bg_color;
         }
-        win->cursor_y -= 8;
+        win->cursor_y -= 16;
     }
     redraw_needed = 1;
 }
@@ -309,36 +307,19 @@ static void wm_render(void) {
         if (!w->active) continue;
         
         // Window Border (1px flat)
-        vesa_draw_rect(w->x - 1, w->y - 1, w->w + 2, w->h + 22, current_theme.window_border);
+        vesa_draw_rect_alpha(w->x - 1, w->y - 1, w->w + 2, w->h + 22, current_theme.window_border, w->alpha);
         // Window Title bar (20px high)
-        vesa_draw_rect(w->x, w->y, w->w, 20, (w == focused_window) ? current_theme.title_bg : current_theme.title_inactive_bg);
-        wm_draw_string(w->x + 5, w->y + 6, w->title, current_theme.title_fg);
+        vesa_draw_rect_alpha(w->x, w->y, w->w, 20, (w == focused_window) ? current_theme.title_bg : current_theme.title_inactive_bg, w->alpha);
+        wm_draw_string(w->x + 5, w->y + 2, w->title, current_theme.title_fg);
         
         // Close Button (Modern Flat)
-        vesa_draw_rect(w->x + w->w - 18, w->y + 2, 16, 16, 0xC00000);
+        vesa_draw_rect_alpha(w->x + w->w - 18, w->y + 2, 16, 16, 0xC00000, w->alpha);
         wm_draw_string(w->x + w->w - 14, w->y + 6, "x", 0xFFFFFF);
         
-        // Draw the inner buffer with Alpha Transparency for Terminal
-        if (strncmp(w->title, "Terminal", 8) == 0) {
-            for (uint32_t yy = 0; yy < w->h; yy++) {
-                for (uint32_t xx = 0; xx < w->w; xx++) {
-                    uint32_t px = w->buffer[yy * w->w + xx];
-                    if (px == w->bg_color && desktop_bg_buffer) {
-                        uint32_t bg = desktop_bg_buffer[(w->y + 20 + yy) * vesa_width + (w->x + xx)];
-                        uint32_t r = (((bg >> 16) & 0xFF) + ((px >> 16) & 0xFF)) >> 1;
-                        uint32_t g = (((bg >> 8) & 0xFF) + ((px >> 8) & 0xFF)) >> 1;
-                        uint32_t b = (((bg >> 0) & 0xFF) + ((px >> 0) & 0xFF)) >> 1;
-                        vesa_putpixel(w->x + xx, w->y + 20 + yy, (r << 16) | (g << 8) | b);
-                    } else {
-                        vesa_putpixel(w->x + xx, w->y + 20 + yy, px);
-                    }
-                }
-            }
-        } else {
-            for (uint32_t yy = 0; yy < w->h; yy++) {
-                for (uint32_t xx = 0; xx < w->w; xx++) {
-                    vesa_putpixel(w->x + xx, w->y + 20 + yy, w->buffer[yy * w->w + xx]);
-                }
+        // Draw the inner buffer with Alpha Transparency
+        for (uint32_t yy = 0; yy < w->h; yy++) {
+            for (uint32_t xx = 0; xx < w->w; xx++) {
+                vesa_putpixel_alpha(w->x + xx, w->y + 20 + yy, w->buffer[yy * w->w + xx], w->alpha);
             }
         }
         
@@ -349,7 +330,7 @@ static void wm_render(void) {
         if (w == focused_window && (strncmp(w->title, "Notepad", 7) == 0 || strncmp(w->title, "Terminal", 8) == 0 || strncmp(w->title, "Calculator", 10) == 0)) {
             uint32_t ticks = pit_get_ticks();
             if ((ticks / 50) % 2 == 0) {
-                vesa_draw_rect(w->x + w->cursor_x, w->y + 20 + w->cursor_y, 8, 8, w->fg_color);
+                vesa_draw_rect(w->x + w->cursor_x, w->y + 20 + w->cursor_y, 8, 16, w->fg_color);
             }
         }
     }
@@ -649,7 +630,7 @@ void wm_process_events(void) {
                         mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
                         my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
                         
-                        int clicked_row = (my - (w->y + 20)) / 8;
+                        int clicked_row = (my - (w->y + 20)) / 16;
                         char name[100];
                         if (tar_get_file_at_index(clicked_row, name)) {
                             int len = strlen(name);
