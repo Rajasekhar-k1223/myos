@@ -37,6 +37,30 @@ static uint32_t last_clock_ticks = 0;
 static int start_menu_open = 0;
 static int start_btn_pressed = 0;
 
+theme_t theme_win95 = {
+    .window_bg = 0xC0C0C0,
+    .window_border = 0xC0C0C0,
+    .title_bg = 0x0000A0,
+    .title_fg = 0xFFFFFF,
+    .taskbar_bg = 0xC0C0C0,
+    .start_btn_bg = 0x008000,
+    .start_btn_fg = 0xFFFFFF,
+    .menu_fg = 0x000000
+};
+
+theme_t theme_ubuntu = {
+    .window_bg = 0x303030,
+    .window_border = 0x202020,
+    .title_bg = 0x300A24,
+    .title_fg = 0xFFFFFF,
+    .taskbar_bg = 0x222222,
+    .start_btn_bg = 0xE95420,
+    .start_btn_fg = 0xFFFFFF,
+    .menu_fg = 0xFFFFFF
+};
+
+theme_t current_theme;
+
 static const uint32_t cursor_bitmap[15][10] = {
     {1,0,0,0,0,0,0,0,0,0},
     {1,1,0,0,0,0,0,0,0,0},
@@ -59,6 +83,8 @@ void wm_init(void) {
     extern uint32_t vesa_width, vesa_height;
     vesa_init_backbuffer();
     vesa_set_double_buffer(1);
+    
+    current_theme = theme_win95;
     
     desktop_bg_buffer = (uint32_t*)kmalloc(vesa_width * vesa_height * 4);
     for (uint32_t i = 0; i < vesa_width * vesa_height; i++) {
@@ -221,10 +247,10 @@ static void wm_render(void) {
         if (!w->active) continue;
         
         // Window Border (2px)
-        vesa_draw_rect(w->x - 2, w->y - 2, w->w + 4, w->h + 24, 0xC0C0C0);
+        vesa_draw_rect(w->x - 2, w->y - 2, w->w + 4, w->h + 24, current_theme.window_border);
         // Window Title bar (20px high)
-        vesa_draw_rect(w->x, w->y, w->w, 20, 0x0000A0); // Dark Blue
-        wm_draw_string(w->x + 5, w->y + 6, w->title, 0xFFFFFF); // White Text
+        vesa_draw_rect(w->x, w->y, w->w, 20, current_theme.title_bg);
+        wm_draw_string(w->x + 5, w->y + 6, w->title, current_theme.title_fg);
         
         // Close Button (Red 'X')
         vesa_draw_rect(w->x + w->w - 18, w->y + 2, 16, 16, 0xC00000);
@@ -241,19 +267,19 @@ static void wm_render(void) {
     }
     
     // 3. Draw Taskbar
-    vesa_draw_rect(0, vesa_height - 30, vesa_width, 30, 0xC0C0C0);
+    vesa_draw_rect(0, vesa_height - 30, vesa_width, 30, current_theme.taskbar_bg);
     vesa_draw_rect(0, vesa_height - 30, vesa_width, 2, 0xFFFFFF); // 3D highlight top edge
     
     // Start Button
-    vesa_draw_rect(5, vesa_height - 25, 60, 20, 0x008000); // Green
+    vesa_draw_rect(5, vesa_height - 25, 60, 20, current_theme.start_btn_bg); // Background
     if (start_btn_pressed) {
-        vesa_draw_rect(5, vesa_height - 25, 60, 2, 0x004000); // Pressed shadow
-        vesa_draw_rect(5, vesa_height - 25, 2, 20, 0x004000); 
+        vesa_draw_rect(5, vesa_height - 25, 60, 2, 0x000000); // Pressed shadow
+        vesa_draw_rect(5, vesa_height - 25, 2, 20, 0x000000); 
     } else {
-        vesa_draw_rect(5, vesa_height - 25, 60, 2, 0x00FF00); // Highlight
-        vesa_draw_rect(5, vesa_height - 25, 2, 20, 0x00FF00); 
+        vesa_draw_rect(5, vesa_height - 25, 60, 2, 0xFFFFFF); // Highlight
+        vesa_draw_rect(5, vesa_height - 25, 2, 20, 0xFFFFFF); 
     }
-    wm_draw_string(15, vesa_height - 19, "START", 0xFFFFFF);
+    wm_draw_string(15, vesa_height - 19, "START", current_theme.start_btn_fg);
     
     // Clock Box (Inset 3D)
     vesa_draw_rect(vesa_width - 160, vesa_height - 25, 150, 20, 0xA0A0A0);
@@ -266,12 +292,12 @@ static void wm_render(void) {
     // 4. Draw Start Menu
     if (start_menu_open) {
         uint32_t m_w = 150;
-        uint32_t m_h = 200;
+        uint32_t m_h = 240;
         uint32_t m_x = 0;
         uint32_t m_y = vesa_height - 30 - m_h;
         
         // Menu Background
-        vesa_draw_rect(m_x, m_y, m_w, m_h, 0xC0C0C0);
+        vesa_draw_rect(m_x, m_y, m_w, m_h, current_theme.window_bg);
         // 3D Borders
         vesa_draw_rect(m_x, m_y, m_w, 2, 0xFFFFFF); // top
         vesa_draw_rect(m_x, m_y, 2, m_h, 0xFFFFFF); // left
@@ -279,20 +305,22 @@ static void wm_render(void) {
         vesa_draw_rect(m_x, m_y + m_h - 2, m_w, 2, 0x808080); // bottom
         
         // Side banner
-        vesa_draw_rect(m_x + 2, m_y + 2, 25, m_h - 4, 0x0000A0);
-        wm_draw_string(m_x + 6, m_y + m_h - 50, "my", 0xFFFFFF);
-        wm_draw_string(m_x + 6, m_y + m_h - 40, "OS", 0xFFFFFF);
+        vesa_draw_rect(m_x + 2, m_y + 2, 25, m_h - 4, current_theme.title_bg);
+        wm_draw_string(m_x + 6, m_y + m_h - 50, "my", current_theme.title_fg);
+        wm_draw_string(m_x + 6, m_y + m_h - 40, "OS", current_theme.title_fg);
         
         // Menu Items
-        wm_draw_string(m_x + 35, m_y + 20, "New Terminal", 0x000000);
-        wm_draw_string(m_x + 35, m_y + 45, "New Window", 0x000000);
-        wm_draw_string(m_x + 35, m_y + 70, "Image Viewer", 0x000000);
-        wm_draw_string(m_x + 35, m_y + 95, "File Explorer", 0x000000);
-        wm_draw_string(m_x + 35, m_y + 120, "Play Snake", 0x000000);
+        wm_draw_string(m_x + 35, m_y + 20, "New Terminal", current_theme.menu_fg);
+        wm_draw_string(m_x + 35, m_y + 45, "New Window", current_theme.menu_fg);
+        wm_draw_string(m_x + 35, m_y + 70, "Image Viewer", current_theme.menu_fg);
+        wm_draw_string(m_x + 35, m_y + 95, "File Explorer", current_theme.menu_fg);
+        wm_draw_string(m_x + 35, m_y + 120, "Play Snake", current_theme.menu_fg);
+        wm_draw_string(m_x + 35, m_y + 145, "Text Reverser", current_theme.menu_fg);
+        wm_draw_string(m_x + 35, m_y + 170, "Switch Theme", current_theme.menu_fg);
         
-        vesa_draw_rect(m_x + 35, m_y + 160, m_w - 45, 1, 0x808080); // Separator
+        vesa_draw_rect(m_x + 35, m_y + 195, m_w - 45, 1, 0x808080); // Separator
         
-        wm_draw_string(m_x + 35, m_y + 175, "Reboot", 0x000000);
+        wm_draw_string(m_x + 35, m_y + 210, "Reboot", current_theme.menu_fg);
     }
     
     // 5. Draw Mouse
@@ -339,9 +367,9 @@ void wm_process_events(void) {
             redraw_needed = 1;
         } 
         // Check Start Menu items click
-        else if (start_menu_open && mx >= 0 && mx <= 150 && my >= (int)(vesa_height - 30 - 200) && my <= (int)(vesa_height - 30)) {
+        else if (start_menu_open && mx >= 0 && mx <= 150 && my >= (int)(vesa_height - 30 - 240) && my <= (int)(vesa_height - 30)) {
             clicked_on_something = 1;
-            uint32_t m_y = vesa_height - 30 - 200;
+            uint32_t m_y = vesa_height - 30 - 240;
             
             if (my >= (int)(m_y + 15) && my <= (int)(m_y + 35)) {
                 // New Terminal
@@ -377,7 +405,27 @@ void wm_process_events(void) {
                 snake_init(snake_win);
                 start_menu_open = 0;
                 redraw_needed = 1;
-            } else if (my >= (int)(m_y + 170) && my <= (int)(m_y + 190)) {
+            } else if (my >= (int)(m_y + 140) && my <= (int)(m_y + 160)) {
+                // Text Reverser
+                window_t* txt_win = wm_create_window(150, 150, 400, 300, "Text Reverser");
+                size_t file_size;
+                char* data = (char*)tar_get_file("readme.txt", &file_size);
+                if (data) {
+                    for(int j = (int)file_size - 1; j >= 0; j--) {
+                        wm_putchar(txt_win, data[j]);
+                    }
+                }
+                start_menu_open = 0;
+                redraw_needed = 1;
+            } else if (my >= (int)(m_y + 165) && my <= (int)(m_y + 185)) {
+                // Switch Theme
+                static int theme_idx = 0;
+                theme_idx = !theme_idx;
+                extern theme_t theme_win95, theme_ubuntu;
+                current_theme = theme_idx ? theme_ubuntu : theme_win95;
+                start_menu_open = 0;
+                redraw_needed = 1;
+            } else if (my >= (int)(m_y + 205) && my <= (int)(m_y + 225)) {
                 // Reboot
                 outb(0x64, 0xFE);
                 for (;;) __asm__ volatile("hlt");
