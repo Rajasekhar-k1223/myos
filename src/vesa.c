@@ -1,9 +1,14 @@
 #include "vesa.h"
+#include "kheap.h"
+#include "string.h"
 
 static uint32_t* fb = 0;
 uint32_t vesa_width = 0;
 uint32_t vesa_height = 0;
 static uint32_t fb_pitch = 0;
+
+static uint32_t* backbuffer = 0;
+static int double_buffer_enabled = 0;
 
 void vesa_init(struct multiboot_info* mbi) {
     if (mbi->flags & (1 << 12)) {
@@ -11,6 +16,22 @@ void vesa_init(struct multiboot_info* mbi) {
         vesa_width = mbi->framebuffer_width;
         vesa_height = mbi->framebuffer_height;
         fb_pitch = mbi->framebuffer_pitch;
+    }
+}
+
+void vesa_init_backbuffer(void) {
+    if (vesa_width && vesa_height) {
+        backbuffer = (uint32_t*)kmalloc(vesa_width * vesa_height * 4);
+    }
+}
+
+void vesa_set_double_buffer(int enable) {
+    double_buffer_enabled = enable;
+}
+
+void vesa_swap_buffers(void) {
+    if (double_buffer_enabled && backbuffer && fb) {
+        memcpy(fb, backbuffer, vesa_width * vesa_height * 4);
     }
 }
 
@@ -23,13 +44,24 @@ uint32_t vesa_get_fb_size(void) {
 }
 
 void vesa_putpixel(uint32_t x, uint32_t y, uint32_t color) {
-    if (!fb || x >= vesa_width || y >= vesa_height) return;
-    fb[(y * (fb_pitch / 4)) + x] = color;
+    if (x >= vesa_width || y >= vesa_height) return;
+    
+    if (double_buffer_enabled && backbuffer) {
+        backbuffer[y * vesa_width + x] = color;
+    } else if (fb) {
+        fb[(y * (fb_pitch / 4)) + x] = color;
+    }
 }
 
 uint32_t vesa_getpixel(uint32_t x, uint32_t y) {
-    if (!fb || x >= vesa_width || y >= vesa_height) return 0;
-    return fb[(y * (fb_pitch / 4)) + x];
+    if (x >= vesa_width || y >= vesa_height) return 0;
+    
+    if (double_buffer_enabled && backbuffer) {
+        return backbuffer[y * vesa_width + x];
+    } else if (fb) {
+        return fb[(y * (fb_pitch / 4)) + x];
+    }
+    return 0;
 }
 
 void vesa_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
@@ -41,7 +73,6 @@ void vesa_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t col
 }
 
 void vesa_clear(uint32_t color) {
-    if (!fb) return;
     for (uint32_t y = 0; y < vesa_height; y++) {
         for (uint32_t x = 0; x < vesa_width; x++) {
             vesa_putpixel(x, y, color);
@@ -50,11 +81,20 @@ void vesa_clear(uint32_t color) {
 }
 
 void vesa_scroll(void) {
-    if (!fb) return;
-    for (uint32_t y = 0; y < vesa_height - 8; y++) {
-        for (uint32_t x = 0; x < vesa_width; x++) {
-            fb[y * (fb_pitch / 4) + x] = fb[(y + 8) * (fb_pitch / 4) + x];
+    if (double_buffer_enabled && backbuffer) {
+        for (uint32_t y = 0; y < vesa_height - 8; y++) {
+            for (uint32_t x = 0; x < vesa_width; x++) {
+                backbuffer[y * vesa_width + x] = backbuffer[(y + 8) * vesa_width + x];
+            }
         }
+        vesa_draw_rect(0, vesa_height - 8, vesa_width, 8, 0x000000);
+        vesa_swap_buffers();
+    } else if (fb) {
+        for (uint32_t y = 0; y < vesa_height - 8; y++) {
+            for (uint32_t x = 0; x < vesa_width; x++) {
+                fb[y * (fb_pitch / 4) + x] = fb[(y + 8) * (fb_pitch / 4) + x];
+            }
+        }
+        vesa_draw_rect(0, vesa_height - 8, vesa_width, 8, 0x000000);
     }
-    vesa_draw_rect(0, vesa_height - 8, vesa_width, 8, 0x000000);
 }

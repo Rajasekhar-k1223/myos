@@ -333,8 +333,16 @@ void kernel_main(uint32_t magic, struct multiboot_info* mbi) {
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     terminal_putchar('\n');
 
-    enter_user_mode();
+#include "wm.h"
+    boot_section("Window Manager");
+    wm_init();
+    boot_ok("GUI", "Double-buffered Compositor Started");
 
-    /* ── Shell (runs as task 0) ── */
-    // shell_init();
+    wm_create_window(100, 100, 400, 300, "Welcome to myOS");
+    wm_create_window(150, 150, 300, 200, "System Monitor");
+
+    while (1) {
+        wm_process_events();
+        __asm__ volatile("hlt");
+    }
 }
