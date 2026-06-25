@@ -14,6 +14,14 @@ void vesa_init(struct multiboot_info* mbi) {
     }
 }
 
+uint32_t vesa_get_fb_addr(void) {
+    return (uint32_t)fb;
+}
+
+uint32_t vesa_get_fb_size(void) {
+    return fb_pitch * vesa_height;
+}
+
 void vesa_putpixel(uint32_t x, uint32_t y, uint32_t color) {
     if (!fb || x >= vesa_width || y >= vesa_height) return;
     fb[(y * (fb_pitch / 4)) + x] = color;

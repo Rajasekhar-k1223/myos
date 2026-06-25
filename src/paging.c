@@ -30,6 +30,17 @@ void paging_init(void) {
         paging_map_page(i, i, 7); // 7 = Present + Read/Write + User
     }
 
+    // Identity map the VESA Framebuffer
+    extern uint32_t vesa_get_fb_addr(void);
+    extern uint32_t vesa_get_fb_size(void);
+    uint32_t fb_addr = vesa_get_fb_addr() & ~0xFFF;
+    uint32_t fb_size = vesa_get_fb_size();
+    if (fb_addr != 0) {
+        for (uint32_t i = 0; i < fb_size + 4096; i += 4096) {
+            paging_map_page(fb_addr + i, fb_addr + i, 3); // Supervisor, R/W
+        }
+    }
+
     // Assembly function to set CR3 and enable CR0 paging bit
     // We will define this inline here for simplicity
     asm volatile("mov %0, %%cr3" :: "r"(page_directory));
