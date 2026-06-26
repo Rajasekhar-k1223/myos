@@ -12,7 +12,7 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/paint.c src/ata.c src/fs.c src/fat16.c src/explorer.c src/speaker.c \
          src/minesweeper.c src/settings.c src/elf.c src/pci.c src/rtl8139.c \
          src/ethernet.c src/arp.c src/ipv4.c src/icmp.c src/sb16.c src/uhci.c \
-         src/ttf.c src/vector.c src/music.c src/udp.c src/tcp.c
+         src/ttf.c src/vector.c src/music.c src/udp.c src/tcp.c src/browser.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)

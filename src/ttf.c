@@ -234,3 +234,15 @@ void ttf_render_glyph(uint16_t glyph_index, float scale, float offset_x, float o
     
     vec_fill(buffer, width, height, color);
 }
+
+void ttf_draw_string(uint32_t* buffer, int width, int height, int x, int y, const char* str, int font_size, uint32_t color) {
+    float scale = (float)font_size / 1000.0f; // Hacky fixed scale
+    float cur_x = x;
+    for (int i = 0; str[i] != '\0'; i++) {
+        uint16_t gid = ttf_get_glyph_index(str[i]);
+        if (gid) {
+            ttf_render_glyph(gid, scale, cur_x, y, buffer, width, height, color);
+        }
+        cur_x += 1000.0f * scale; // Advance based on scale
+    }
+}

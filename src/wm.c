@@ -421,9 +421,16 @@ int wm_handle_shortcut(char key) {
         return 1;
     }
     if (key == 'u' || key == 'U') {
-        window_t* m_win = wm_create_window(150, 150, 300, 200, "Music Player");
+        window_t* m_win = wm_create_window(200, 200, 300, 150, "Music Player");
         extern void music_init(window_t*);
         music_init(m_win);
+        redraw_needed = 1;
+        return 1;
+    }
+    if (key == 'w' || key == 'W') {
+        window_t* b_win = wm_create_window(100, 100, 600, 400, "Netscape Elsea");
+        extern void browser_init(window_t*);
+        browser_init(b_win);
         redraw_needed = 1;
         return 1;
     }
@@ -1491,9 +1498,12 @@ void wm_process_events(void) {
                         my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
                         extern void settings_handle_click(window_t*, int, int);
                         settings_handle_click(w, mx, my);
-                    } else if (strncmp(w->title, "Music Player", 12) == 0) {
+                    } else if (w->title[0] == 'M' && w->title[1] == 'u') {
                         extern void music_handle_click(window_t*, int, int);
                         music_handle_click(w, mx, my);
+                    } else if (w->title[0] == 'N' && w->title[1] == 'e') {
+                        extern void browser_handle_click(int, int);
+                        browser_handle_click(mx, my);
                     }
                     clicked_on_something = 1;
                     break;
@@ -1707,6 +1717,10 @@ int wm_handle_keypress(char c) {
         return 1;
     } else if (focused_window && strncmp(focused_window->title, "Notepad", 7) == 0) {
         wm_putchar(focused_window, c);
+        return 1;
+    } else if (focused_window && strncmp(focused_window->title, "Netscape", 8) == 0) {
+        extern void browser_handle_keypress(char);
+        browser_handle_keypress(c);
         return 1;
     } else if (focused_window && strncmp(focused_window->title, "Calculator", 10) == 0) {
         calc_handle_input(focused_window, c);
