@@ -19,10 +19,14 @@ void ipv4_receive_packet(uint8_t* payload, uint32_t length) {
     uint8_t ihl = (ip->version_ihl & 0x0F) * 4;
     
     if (ip->protocol == 1) { // ICMP
-        // The sender MAC is needed to reply. We'll cheat slightly for now and assume the packet is still inside the ethernet frame buffer.
-        // But better yet, we can extract the MAC from the ethernet header which is just before the IP header.
         uint8_t* src_mac = payload - sizeof(ethernet_header_t) + 6;
         icmp_receive_packet(ip->src_ip, src_mac, payload + ihl, len - ihl);
+    } else if (ip->protocol == 6) { // TCP
+        extern void tcp_receive_packet(uint8_t*, uint32_t, uint32_t);
+        tcp_receive_packet(payload + ihl, len - ihl, ip->src_ip);
+    } else if (ip->protocol == 17) { // UDP
+        extern void udp_receive_packet(uint8_t*, uint32_t, uint32_t);
+        udp_receive_packet(payload + ihl, len - ihl, ip->src_ip);
     }
 }
 

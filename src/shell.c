@@ -413,6 +413,44 @@ static void execute(void) {
         extern void elf_load_and_run(const char*);
         elf_load_and_run(cmd + 5);
     }
+    else if (strncmp(cmd, "http_get ", 9) == 0) {
+        char* ip_str = cmd + 9;
+        uint32_t a, b, c, d;
+        int i = 0, part = 0, val = 0;
+        uint32_t ip = 0;
+        while (ip_str[i]) {
+            if (ip_str[i] == '.') {
+                ip |= (val << (24 - part * 8));
+                part++;
+                val = 0;
+            } else if (ip_str[i] >= '0' && ip_str[i] <= '9') {
+                val = val * 10 + (ip_str[i] - '0');
+            }
+            i++;
+        }
+        ip |= val; // Last part
+        
+        terminal_printf("  Connecting to HTTP Server at %d.%d.%d.%d...\n", (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
+        extern int tcp_connect(uint32_t, uint16_t);
+        if (tcp_connect(ip, 80)) {
+            char* get_req = "GET / HTTP/1.1\r\nHost: myos\r\nConnection: close\r\n\r\n";
+            extern int tcp_send_data(uint8_t*, uint32_t);
+            tcp_send_data((uint8_t*)get_req, strlen(get_req));
+            
+            extern volatile int tcp_has_data;
+            extern uint8_t tcp_recv_buffer[4096];
+            uint32_t timeout = pit_get_ticks() + 5000;
+            while (!tcp_has_data && pit_get_ticks() < timeout);
+            
+            if (tcp_has_data) {
+                terminal_writestring("\n--- HTTP RESPONSE ---\n");
+                terminal_writestring((char*)tcp_recv_buffer);
+                terminal_writestring("\n---------------------\n");
+            } else {
+                terminal_writestring("  No response received.\n");
+            }
+        }
+    }
     else {
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
         terminal_printf("  Command not found: %s\n", cmd);
