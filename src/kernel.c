@@ -26,6 +26,7 @@
 #include "fs.h"
 #include "fat16.h"
 #include "speaker.h"
+#include "rtl8139.h"
 
 window_t* shell_window = 0;
 
@@ -425,6 +426,9 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
 
     wm_create_window(50, 50, 400, 300, "System Monitor");
     shell_window = wm_create_window(150, 100, 600, 400, "Terminal");
+
+    // Initialize Networking
+    rtl8139_init();
 
     shell_init();
 
