@@ -1,6 +1,8 @@
 #include "syscall.h"
 #include "idt.h"
 #include "kernel.h"
+#include "task.h"
+#include "elf.h"
 
 // System call handler
 static void syscall_handler(struct registers* regs) {
@@ -18,11 +20,19 @@ static void syscall_handler(struct registers* regs) {
             break;
         }
         case 1: { // sys_exit
-            extern void task_exit(void);
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
             terminal_writestring("[Syscall] Thread exited.\n");
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
             task_exit();
+            break;
+        }
+        case 2: { // sys_fork
+            regs->eax = task_fork(regs);
+            break;
+        }
+        case 3: { // sys_exec
+            const char* path = (const char*)regs->ebx;
+            regs->eax = task_exec(path, regs);
             break;
         }
         default:

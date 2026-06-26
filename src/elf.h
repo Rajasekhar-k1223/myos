@@ -2,6 +2,8 @@
 #define ELF_H
 
 #include <stdint.h>
+#include <stddef.h>
+#include "idt.h"
 
 #define ELF_MAGIC 0x464C457FU  // "\x7FELF"
 
@@ -43,5 +45,6 @@ typedef struct {
 
 uint32_t elf_load(const char* filename);
 void elf_load_and_run(const char* filename);
+int task_exec(const char* filename, struct registers* regs);
 
 #endif

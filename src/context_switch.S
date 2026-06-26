@@ -61,3 +61,20 @@ jump_usermode:
     /* We placed an IRET frame on the stack: SS, ESP, EFLAGS, CS, EIP */
     /* To cleanly jump to Ring 3, we just execute iret */
     iret
+
+.global clone_context
+clone_context:
+    mov  4(%esp), %eax
+    mov  %edi,  0(%eax)
+    mov  %esi,  4(%eax)
+    mov  %ebp,  8(%eax)
+    mov  %esp, 12(%eax)
+    mov  %ebx, 16(%eax)
+    mov  %edx, 20(%eax)
+    mov  %ecx, 24(%eax)
+    mov  (%esp), %ecx
+    mov  %ecx, 32(%eax) /* eip = return address */
+    pushf
+    pop  %ecx
+    mov  %ecx, 36(%eax) /* eflags */
+    ret

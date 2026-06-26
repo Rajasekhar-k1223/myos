@@ -4,6 +4,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "kernel.h"
+#include "task.h"
 
 void elf_load_and_run(const char* filename) {
     size_t file_size;
@@ -82,4 +83,56 @@ void elf_load_and_run(const char* filename) {
     extern int task_create_user(const char* name, uint32_t entry, uint32_t user_stack_top, uint32_t* page_directory);
     task_create_user(filename, header->e_entry, user_stack_top, new_dir);
     terminal_printf("  [ELF] Spawning Ring 3 Task for %s...\n", filename);
+}
+
+int task_exec(const char* filename, struct registers* regs) {
+    size_t file_size;
+    const uint8_t* elf_data = (const uint8_t*)tar_get_file(filename, &file_size);
+    if (!elf_data) return -1;
+    
+    Elf32_Ehdr* header = (Elf32_Ehdr*)elf_data;
+    if (header->e_ident_mag != ELF_MAGIC || header->e_machine != 3) return -1;
+
+    extern uint32_t* current_page_directory;
+    extern uint32_t* paging_clone_directory(void);
+    extern void paging_switch_directory(uint32_t* dir);
+    
+    uint32_t* new_dir = paging_clone_directory();
+    paging_switch_directory(new_dir);
+    
+    Elf32_Phdr* phdrs = (Elf32_Phdr*)(elf_data + header->e_phoff);
+    for (int i = 0; i < header->e_phnum; i++) {
+        if (phdrs[i].p_type == PT_LOAD) {
+            uint32_t vaddr = phdrs[i].p_vaddr;
+            uint32_t memsz = phdrs[i].p_memsz;
+            uint32_t filesz = phdrs[i].p_filesz;
+            uint32_t offset = phdrs[i].p_offset;
+            
+            uint32_t start_page = vaddr & ~0xFFF;
+            uint32_t end_page = (vaddr + memsz + 0xFFF) & ~0xFFF;
+            for (uint32_t page = start_page; page < end_page; page += 4096) {
+                void* frame = pmm_alloc_frame();
+                memset(frame, 0, 4096);
+                paging_map_page(page, (uint32_t)frame, 7);
+            }
+            if (filesz > 0) memcpy((void*)vaddr, elf_data + offset, filesz);
+        }
+    }
+    
+    uint32_t user_stack_top = 0xB0000000;
+    for (uint32_t p = user_stack_top - 8192; p < user_stack_top; p += 4096) {
+        void* frame = pmm_alloc_frame();
+        memset(frame, 0, 4096);
+        paging_map_page(p, (uint32_t)frame, 7);
+    }
+
+    task_t* cur = task_current();
+    cur->page_directory = new_dir;
+    
+    // Modify the registers pushed by the interrupt handler
+    // so when it returns, it jumps into the new ELF!
+    regs->eip = header->e_entry;
+    regs->useresp = user_stack_top;
+    
+    return 0;
 }

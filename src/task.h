@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "idt.h"
 
 /* ── Task states ─────────────────────────────────────────────────────────── */
 typedef enum {
@@ -39,6 +40,7 @@ typedef struct task {
 void     tasking_init(void);
 int      task_create(const char* name, void (*entry)(void));
 int      task_create_user(const char* name, uint32_t entry, uint32_t user_stack_top, uint32_t* page_directory);
+int      task_fork(struct registers* regs);
 void     task_exit(void);
 void     task_sleep(uint32_t ms);
 void     task_tick(void);           /* called from PIT IRQ0 */

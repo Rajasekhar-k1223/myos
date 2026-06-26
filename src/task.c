@@ -2,6 +2,7 @@
 #include "pit.h"
 #include "string.h"
 #include "kernel.h"
+#include "paging.h"
 #include <stdint.h>
 
 /* ── Globals ─────────────────────────────────────────────────────────────── */
@@ -126,6 +127,41 @@ int task_create_user(const char* name, uint32_t entry, uint32_t user_stack_top, 
 
     task_count_n++;
     return (int)t->id;
+}
+
+extern void clone_context(cpu_context_t* ctx);
+
+int task_fork(struct registers* regs) {
+    task_t* parent = task_current();
+    task_t* child = alloc_slot();
+    if (!child) return -1;
+
+    asm volatile("cli");
+    memcpy(child, parent, sizeof(task_t));
+
+    child->id = next_id++;
+    child->state = TASK_READY;
+    child->page_directory = paging_clone_directory();
+
+    uint32_t offset = (uint32_t)child->stack - (uint32_t)parent->stack;
+    child->kernel_stack += offset;
+
+    clone_context(&child->ctx);
+
+    if (task_current() == parent) {
+        child->ctx.esp += offset;
+        child->ctx.ebp += offset; // Assuming EBP is on the stack
+        
+        struct registers* child_regs = (struct registers*)((uint32_t)regs + offset);
+        child_regs->eax = 0; // Return 0 in child
+        
+        task_count_n++;
+        asm volatile("sti");
+        return child->id;
+    } else {
+        // We are the child!
+        return 0;
+    }
 }
 
 /* Called by a task when it wants to stop. */

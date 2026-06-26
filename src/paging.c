@@ -27,8 +27,8 @@ void paging_init(void) {
     memset(kernel_page_directory, 0, 4096);
     current_page_directory = kernel_page_directory;
 
-    // Identity map the first 16MB of memory (Kernel space)
-    for (uint32_t i = 0; i < 0x1000000; i += 4096) {
+    // Identity map the first 128MB of memory (Kernel space)
+    for (uint32_t i = 0; i < 0x8000000; i += 4096) {
         paging_map_page(i, i, 3); // 3 = Present + Read/Write + Supervisor Only!
     }
 
@@ -55,13 +55,24 @@ uint32_t* paging_clone_directory(void) {
     uint32_t* dir = (uint32_t*)pmm_alloc_frame();
     memset(dir, 0, 4096);
     
-    // Copy the kernel's page tables (0 - 16MB and VESA framebuffers)
-    // The kernel mappings must be kept identical across all processes!
     for (int i = 0; i < 1024; i++) {
-        // Just link to the kernel's page tables directly
-        // Because they are supervisor only, user apps can't access them anyway
         if (kernel_page_directory[i] & 1) {
             dir[i] = kernel_page_directory[i];
+        } else if (current_page_directory[i] & 1) {
+            // User page table! We must deep copy it.
+            uint32_t* pt = (uint32_t*)pmm_alloc_frame();
+            memset(pt, 0, 4096);
+            dir[i] = (uint32_t)pt | 7; // Present, R/W, User
+            
+            uint32_t* src_pt = (uint32_t*)(current_page_directory[i] & ~0xFFF);
+            for (int j = 0; j < 1024; j++) {
+                if (src_pt[j] & 1) {
+                    void* new_frame = pmm_alloc_frame();
+                    void* old_frame = (void*)(src_pt[j] & ~0xFFF);
+                    memcpy(new_frame, old_frame, 4096);
+                    pt[j] = (uint32_t)new_frame | (src_pt[j] & 0xFFF);
+                }
+            }
         }
     }
     return dir;
