@@ -71,3 +71,32 @@ void pci_enable_bus_mastering(pci_device_t* dev) {
     cmd |= 0x0004; // Bus Master Enable
     pci_write_config_16(dev->bus, dev->slot, dev->func, 0x04, cmd);
 }
+
+int pci_get_device_by_class(uint8_t class_code, uint8_t subclass, uint8_t prog_if, pci_device_t* out_dev) {
+    for (uint16_t bus = 0; bus < 256; bus++) {
+        for (uint8_t slot = 0; slot < 32; slot++) {
+            uint16_t v = pci_read_config_16(bus, slot, 0, 0);
+            if (v == 0xFFFF) continue; // No device
+
+            for (uint8_t func = 0; func < 8; func++) {
+                v = pci_read_config_16(bus, slot, func, 0);
+                if (v == 0xFFFF) continue;
+                
+                uint32_t class_reg = pci_read_config_32(bus, slot, func, 0x08);
+                uint8_t c = (class_reg >> 24) & 0xFF;
+                uint8_t sc = (class_reg >> 16) & 0xFF;
+                uint8_t p = (class_reg >> 8) & 0xFF;
+
+                if (c == class_code && sc == subclass && p == prog_if) {
+                    out_dev->bus = bus;
+                    out_dev->slot = slot;
+                    out_dev->func = func;
+                    out_dev->vendor = v;
+                    out_dev->device = pci_read_config_16(bus, slot, func, 2);
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}

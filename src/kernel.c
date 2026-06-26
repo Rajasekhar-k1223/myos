@@ -28,6 +28,7 @@
 #include "speaker.h"
 #include "rtl8139.h"
 #include "sb16.h"
+#include "uhci.h"
 
 window_t* shell_window = 0;
 
@@ -433,6 +434,7 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
 
     // Initialize Audio
     sb16_init();
+    uhci_init();
 
     shell_init();
 
