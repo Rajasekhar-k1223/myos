@@ -10,6 +10,10 @@ static int     current_tid  = 0;
 static int     task_count_n = 0;
 
 extern void context_switch(cpu_context_t* old_ctx, cpu_context_t* new_ctx);
+extern uint32_t* current_page_directory;
+extern void paging_switch_directory(uint32_t* dir);
+extern void tss_set_stack(uint32_t ss0, uint32_t esp0);
+void jump_usermode(void);
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 static uint32_t next_id = 0;
@@ -46,6 +50,8 @@ void tasking_init(void) {
     tasks[0].id    = next_id++;
     tasks[0].state = TASK_RUNNING;
     strncpy(tasks[0].name, "kernel", TASK_NAME_LEN - 1);
+    tasks[0].page_directory = current_page_directory;
+    tasks[0].kernel_stack = (uint32_t)(tasks[0].stack + TASK_STACK_SIZE);
     task_count_n = 1;
     current_tid  = 0;
 }
@@ -76,9 +82,47 @@ int task_create(const char* name, void (*entry)(void)) {
     uint32_t* sp = (uint32_t*)(t->stack + TASK_STACK_SIZE);
     *(--sp) = (uint32_t)task_exit;   /* return address: if entry() returns */
 
+    t->page_directory = current_page_directory;
+    t->kernel_stack = (uint32_t)sp + 4; // Top of stack before task_exit was pushed
+
     t->ctx.esp    = (uint32_t)sp;
     t->ctx.eip    = (uint32_t)entry;
     t->ctx.eflags = 0x202; /* IF=1, bit 1 always set */
+
+    task_count_n++;
+    return (int)t->id;
+}
+
+/*
+ * Create a new Ring 3 User Mode task.
+ */
+int task_create_user(const char* name, uint32_t entry, uint32_t user_stack_top, uint32_t* page_directory) {
+    task_t* t = alloc_slot();
+    if (!t) return -1;
+
+    memset(t, 0, sizeof(task_t));
+    t->id    = next_id++;
+    t->state = TASK_READY;
+    strncpy(t->name, name, TASK_NAME_LEN - 1);
+
+    t->page_directory = page_directory;
+    uint32_t* sp = (uint32_t*)(t->stack + TASK_STACK_SIZE);
+    t->kernel_stack = (uint32_t)sp;
+
+    // Set up an IRET frame for User Mode
+    *(--sp) = 0x23;             // SS (User Data Segment)
+    *(--sp) = user_stack_top;   // User ESP
+    *(--sp) = 0x202;            // EFLAGS (IF=1)
+    *(--sp) = 0x1B;             // CS (User Code Segment)
+    *(--sp) = entry;            // EIP (User entry point)
+    
+    // We also need a return address for the context_switch return,
+    // which will point to a tiny assembly stub that just does `iret`.
+    *(--sp) = (uint32_t)jump_usermode; 
+
+    t->ctx.esp    = (uint32_t)sp;
+    t->ctx.eip    = (uint32_t)jump_usermode;
+    t->ctx.eflags = 0x202;
 
     task_count_n++;
     return (int)t->id;
@@ -163,6 +207,14 @@ void schedule(void) {
 
     tasks[next].state = TASK_RUNNING;
     current_tid       = next;
+
+    // Switch Address Space
+    if (tasks[next].page_directory && tasks[next].page_directory != current_page_directory) {
+        paging_switch_directory(tasks[next].page_directory);
+    }
+    
+    // Update TSS so interrupts from User Mode switch to the correct kernel stack!
+    tss_set_stack(0x10, tasks[next].kernel_stack);
 
     context_switch(&tasks[old].ctx, &tasks[next].ctx);
 }

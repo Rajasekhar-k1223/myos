@@ -31,11 +31,14 @@ typedef struct task {
     uint32_t       sleep_ticks;  /* non-zero while sleeping */
     char           name[TASK_NAME_LEN];
     uint8_t        stack[TASK_STACK_SIZE];
+    uint32_t*      page_directory;
+    uint32_t       kernel_stack;
 } task_t;
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
 void     tasking_init(void);
 int      task_create(const char* name, void (*entry)(void));
+int      task_create_user(const char* name, uint32_t entry, uint32_t user_stack_top, uint32_t* page_directory);
 void     task_exit(void);
 void     task_sleep(uint32_t ms);
 void     task_tick(void);           /* called from PIT IRQ0 */

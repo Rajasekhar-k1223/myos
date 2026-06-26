@@ -410,15 +410,8 @@ static void execute(void) {
             terminal_writestring("  File not found.\n");
     }
     else if (strncmp(cmd, "exec ", 5) == 0) {
-        extern uint32_t elf_load(const char*);
-        uint32_t entry = elf_load(cmd + 5);
-        if (entry) {
-            terminal_printf("  [ELF] Loaded at 0x%x. Spawning thread...\n", entry);
-            extern int task_create(const char*, void (*)(void));
-            task_create(cmd + 5, (void (*)(void))entry);
-        } else {
-            terminal_writestring("  [ELF] Load failed.\n");
-        }
+        extern void elf_load_and_run(const char*);
+        elf_load_and_run(cmd + 5);
     }
     else {
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));

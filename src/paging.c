@@ -3,31 +3,33 @@
 #include "string.h"
 
 // 1024 entries * 4 bytes = 4096 bytes (1 frame)
-static uint32_t* page_directory;
+uint32_t* kernel_page_directory;
+uint32_t* current_page_directory;
 
 
 void paging_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
     uint32_t pdindex = virt >> 22;
     uint32_t ptindex = virt >> 12 & 0x03FF;
 
-    if (!(page_directory[pdindex] & 1)) {
+    if (!(current_page_directory[pdindex] & 1)) {
         // Page table not present, allocate one
         uint32_t* pt = (uint32_t*)pmm_alloc_frame();
         memset(pt, 0, 4096);
-        page_directory[pdindex] = (uint32_t)pt | 7; // Present, Read/Write, User
+        current_page_directory[pdindex] = (uint32_t)pt | 7; // Present, Read/Write, User
     }
 
-    uint32_t* pt = (uint32_t*)(page_directory[pdindex] & ~0xFFF);
+    uint32_t* pt = (uint32_t*)(current_page_directory[pdindex] & ~0xFFF);
     pt[ptindex] = phys | (flags & 0xFFF) | 1; // Present
 }
 
 void paging_init(void) {
-    page_directory = (uint32_t*)pmm_alloc_frame();
-    memset(page_directory, 0, 4096);
+    kernel_page_directory = (uint32_t*)pmm_alloc_frame();
+    memset(kernel_page_directory, 0, 4096);
+    current_page_directory = kernel_page_directory;
 
-    // Identity map the first 16MB of memory
+    // Identity map the first 16MB of memory (Kernel space)
     for (uint32_t i = 0; i < 0x1000000; i += 4096) {
-        paging_map_page(i, i, 7); // 7 = Present + Read/Write + User
+        paging_map_page(i, i, 3); // 3 = Present + Read/Write + Supervisor Only!
     }
 
     // Identity map the VESA Framebuffer
@@ -42,10 +44,30 @@ void paging_init(void) {
     }
 
     // Assembly function to set CR3 and enable CR0 paging bit
-    // We will define this inline here for simplicity
-    asm volatile("mov %0, %%cr3" :: "r"(page_directory));
+    asm volatile("mov %0, %%cr3" :: "r"(current_page_directory));
     uint32_t cr0;
     asm volatile("mov %%cr0, %0" : "=r"(cr0));
     cr0 |= 0x80000000; // Enable paging!
     asm volatile("mov %0, %%cr0" :: "r"(cr0));
+}
+
+uint32_t* paging_clone_directory(void) {
+    uint32_t* dir = (uint32_t*)pmm_alloc_frame();
+    memset(dir, 0, 4096);
+    
+    // Copy the kernel's page tables (0 - 16MB and VESA framebuffers)
+    // The kernel mappings must be kept identical across all processes!
+    for (int i = 0; i < 1024; i++) {
+        // Just link to the kernel's page tables directly
+        // Because they are supervisor only, user apps can't access them anyway
+        if (kernel_page_directory[i] & 1) {
+            dir[i] = kernel_page_directory[i];
+        }
+    }
+    return dir;
+}
+
+void paging_switch_directory(uint32_t* dir) {
+    current_page_directory = dir;
+    asm volatile("mov %0, %%cr3" :: "r"(dir));
 }

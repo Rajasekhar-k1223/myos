@@ -1,3 +1,4 @@
+#include <stdint.h>
 // Standalone ELF Application for ElseaOS
 // This code runs entirely separate from the kernel.
 // Because it runs in kernel space (for now), we can directly call kernel functions!
@@ -14,6 +15,11 @@ void _start() {
     syscall_print("\033[36m========================================\033[0m\n");
     syscall_print("  \033[32mHELLO FROM DYNAMICALLY LOADED ELF!\033[0m    \n");
     syscall_print("\033[36m========================================\033[0m\n");
+
+    syscall_print("\nAttempting to write to Kernel Memory (0x100000)...\n");
+    uint32_t* ptr = (uint32_t*)0x100000;
+    *ptr = 0xDEADBEEF; // This should Page Fault!
+    syscall_print("Uh oh... write succeeded. Isolation FAILED!\n");
     
     // Tell task scheduler to exit this thread
     __asm__ volatile ("int $0x80" : : "a"(1));

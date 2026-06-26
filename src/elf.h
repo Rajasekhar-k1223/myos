@@ -42,5 +42,6 @@ typedef struct {
 } __attribute__((packed)) Elf32_Phdr;
 
 uint32_t elf_load(const char* filename);
+void elf_load_and_run(const char* filename);
 
 #endif

@@ -54,3 +54,10 @@ context_switch:
     mov  12(%ecx), %esp
     /* jump to saved EIP (return into the new task's caller) */
     jmp *32(%ecx)
+
+.global jump_usermode
+jump_usermode:
+    /* context_switch restored esp to our kernel stack, and jumped here */
+    /* We placed an IRET frame on the stack: SS, ESP, EFLAGS, CS, EIP */
+    /* To cleanly jump to Ring 3, we just execute iret */
+    iret
