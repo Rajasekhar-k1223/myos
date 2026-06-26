@@ -4,6 +4,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "idt.h"
+#include "ethernet.h"
 
 // I/O Port Helper
 static inline void outb(uint16_t port, uint8_t data) { asm volatile("outb %0, %1" : : "a"(data), "Nd"(port)); }
@@ -16,6 +17,9 @@ static uint16_t io_base = 0;
 static uint8_t mac_addr[6];
 static uint8_t* rx_buffer;
 static uint32_t current_rx_ptr = 0;
+
+static uint8_t* tx_buffers[4];
+static uint8_t tx_curr = 0;
 
 void rtl8139_init(void) {
     pci_device_t dev;
@@ -53,8 +57,13 @@ void rtl8139_init(void) {
         
     // Allocate 8K + 16 bytes for RX buffer (we'll allocate 3 pages)
     rx_buffer = (uint8_t*)pmm_alloc_frame();
-    pmm_alloc_frame(); // Allocate continuous physically (we assume pmm gives consecutive pages right now, if not this is a bug)
+    pmm_alloc_frame(); // Allocate continuous physically
     pmm_alloc_frame();
+    
+    // Allocate 4 pages for TX buffers
+    for (int i = 0; i < 4; i++) {
+        tx_buffers[i] = (uint8_t*)pmm_alloc_frame();
+    }
     
     // Send the physical address of the RX buffer to the card
     outl(io_base + 0x30, (uint32_t)rx_buffer);
@@ -90,8 +99,8 @@ void rtl8139_handler(struct registers* regs) {
         
         uint8_t* frame = (uint8_t*)(pkt + 2);
         
-        terminal_printf("  [NET] Packet Rx! Len: %d bytes. Src MAC: %x:%x:%x:%x:%x:%x\n",
-            pkt_length, frame[6], frame[7], frame[8], frame[9], frame[10], frame[11]);
+        // Pass the raw frame to the Ethernet layer
+        ethernet_receive_packet(frame, pkt_length - 4); // The length includes a 4 byte CRC at the end that we don't care about
         
         current_rx_ptr = (current_rx_ptr + pkt_length + 4 + 3) & ~3; // Align to 4 bytes
         if (current_rx_ptr > 8192) {
@@ -104,4 +113,23 @@ void rtl8139_handler(struct registers* regs) {
     
     // Acknowledge the interrupt
     outw(io_base + 0x3E, 0x05);
+}
+
+void rtl8139_send_packet(uint8_t* payload, uint32_t length) {
+    if (!io_base) return;
+    
+    // Copy the payload into the current TX buffer
+    memcpy(tx_buffers[tx_curr], payload, length);
+    
+    // Tell the card where the buffer is
+    outl(io_base + 0x20 + (tx_curr * 4), (uint32_t)tx_buffers[tx_curr]);
+    
+    // Write length and start transmission (clearing OWN bit)
+    outl(io_base + 0x10 + (tx_curr * 4), length);
+    
+    tx_curr = (tx_curr + 1) % 4;
+}
+
+uint8_t* rtl8139_get_mac(void) {
+    return mac_addr;
 }
