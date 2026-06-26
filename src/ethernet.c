@@ -4,6 +4,7 @@
 #include "kernel.h"
 #include "string.h"
 #include "arp.h"
+#include "ipv4.h"
 
 void ethernet_receive_packet(uint8_t* payload, uint32_t length) {
     if (length < sizeof(ethernet_header_t)) return;
@@ -14,7 +15,7 @@ void ethernet_receive_packet(uint8_t* payload, uint32_t length) {
     if (type == 0x0806) { // ARP
         arp_receive_packet(payload + sizeof(ethernet_header_t), length - sizeof(ethernet_header_t));
     } else if (type == 0x0800) { // IPv4
-        // terminal_printf("  [ETH] Received IPv4 packet.\n");
+        ipv4_receive_packet(payload + sizeof(ethernet_header_t), length - sizeof(ethernet_header_t));
     }
 }
 
