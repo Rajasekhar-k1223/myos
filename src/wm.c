@@ -420,6 +420,13 @@ int wm_handle_shortcut(char key) {
         redraw_needed = 1;
         return 1;
     }
+    if (key == 'u' || key == 'U') {
+        window_t* m_win = wm_create_window(150, 150, 300, 200, "Music Player");
+        extern void music_init(window_t*);
+        music_init(m_win);
+        redraw_needed = 1;
+        return 1;
+    }
     if (key == 17) { // Page Up
         if (focused_window && focused_window->term_grid) {
             focused_window->term_scroll += 5;
@@ -1065,6 +1072,9 @@ static void wm_render(void) {
 }
 
 void wm_process_events(void) {
+    extern void music_process_audio(void);
+    music_process_audio();
+    
     extern uint32_t vesa_height;
     
     // 0. Update Clock
@@ -1479,10 +1489,14 @@ void wm_process_events(void) {
                     if (strcmp(w->title, "Theme Settings") == 0 &&
                         mx >= (int)w->x && mx <= (int)(w->x + w->w) &&
                         my > (int)(w->y + 20) && my <= (int)(w->y + w->h + 20)) {
+                        extern void settings_handle_click(window_t*, int, int);
                         settings_handle_click(w, mx, my);
-                        clicked_on_something = 1;
-                        break;
+                    } else if (strncmp(w->title, "Music Player", 12) == 0) {
+                        extern void music_handle_click(window_t*, int, int);
+                        music_handle_click(w, mx, my);
                     }
+                    clicked_on_something = 1;
+                    break;
                     
                     // Check if click is inside Paint
                     if (strcmp(w->title, "Paint") == 0 &&

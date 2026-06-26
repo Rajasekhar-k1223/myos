@@ -24,23 +24,26 @@ static uint8_t dsp_read(void) {
     return inb(DSP_READ);
 }
 
-static uint8_t* audio_buffer;
-static uint32_t audio_length = 4096;
+static uint8_t* audio_buffer = 0;
+#define AUDIO_BUFFER_SIZE 4096
+#define HALF_BUFFER_SIZE 2048
+
+volatile int sb16_needs_data = 0;
+volatile uint8_t* sb16_next_buffer = 0;
+static int current_half = 0; // 0 = playing first half, 1 = playing second half
 
 void sb16_init(void) {
     // 1. Reset DSP
     outb(DSP_RESET, 1);
-    for (volatile int i = 0; i < 10000; i++) {} // Delay 3 microseconds
+    for (volatile int i = 0; i < 10000; i++) {} // Delay
     outb(DSP_RESET, 0);
     
-    // Read 0xAA
     uint8_t magic = dsp_read();
     if (magic != 0xAA) {
         terminal_printf("  [SB16] Hardware not found! Read 0x%x\n", magic);
         return;
     }
     
-    // Get version
     dsp_write(0xE1);
     uint8_t major = dsp_read();
     uint8_t minor = dsp_read();
@@ -49,55 +52,75 @@ void sb16_init(void) {
     // Turn on Speaker
     dsp_write(0xD1);
     
-    // 2. Synthesize Square Wave (400 Hz)
-    // 8000 Hz sample rate. 8000 / 400 = 20 samples per cycle. 10 high, 10 low.
+    // Allocate 4KB buffer (guaranteed not to cross 64KB boundary)
     audio_buffer = (uint8_t*)pmm_alloc_frame();
-    for (uint32_t i = 0; i < audio_length; i++) {
-        audio_buffer[i] = ((i % 20) < 10) ? 192 : 64; // 8-bit PCM unsigned (0 to 255)
+    for (uint32_t i = 0; i < AUDIO_BUFFER_SIZE; i++) {
+        audio_buffer[i] = 128; // Silence
     }
     
-    // 3. Program ISA DMA Channel 1
+    // Program ISA DMA Channel 1 for Auto-Initialize
     uint32_t phys = (uint32_t)audio_buffer;
     uint8_t page = (phys >> 16) & 0xFF;
     uint16_t offset = phys & 0xFFFF;
-    uint16_t len = audio_length - 1;
+    uint16_t len = AUDIO_BUFFER_SIZE - 1;
     
     outb(0x0A, 5);         // Mask channel 1
     outb(0x0C, 0);         // Clear byte pointer
-    outb(0x0B, 0x59);      // Auto-Init, Single Transfer, Read (memory to peripheral), Channel 1
+    outb(0x0B, 0x59);      // Auto-Init, Single Transfer, Read, Channel 1
     
-    outb(0x02, offset & 0xFF);         // Low byte of address
-    outb(0x02, (offset >> 8) & 0xFF);  // High byte of address
-    outb(0x83, page);                  // Page register for channel 1
+    outb(0x02, offset & 0xFF);
+    outb(0x02, (offset >> 8) & 0xFF);
+    outb(0x83, page);
     
-    outb(0x03, len & 0xFF);            // Low byte of length
-    outb(0x03, (len >> 8) & 0xFF);     // High byte of length
+    outb(0x03, len & 0xFF);
+    outb(0x03, (len >> 8) & 0xFF);
     
     outb(0x0A, 1);         // Unmask channel 1
     
-    // 4. Register IRQ 5 handler
+    // Register IRQ 5 handler
     register_interrupt_handler(32 + 5, sb16_handler);
-    
-    // 5. Start DSP Playback
-    // Set Sample Rate
-    dsp_write(0x40);
-    dsp_write(8000 >> 8); // Actually SB16 needs a time constant for older versions, but 0x41 is set output sample rate
-    // Wait, DSP version 4 uses command 0x41 for output rate:
+}
+
+void sb16_set_sample_rate(uint16_t hz) {
     dsp_write(0x41);
-    dsp_write(8000 >> 8);
-    dsp_write(8000 & 0xFF);
+    dsp_write(hz >> 8);
+    dsp_write(hz & 0xFF);
+}
+
+void sb16_start_playback(void) {
+    current_half = 0;
+    sb16_needs_data = 1;
+    sb16_next_buffer = audio_buffer + HALF_BUFFER_SIZE;
     
-    // 8-bit auto-init
-    dsp_write(0xC6); 
-    dsp_write(0x00); // mono, unsigned
+    uint16_t len = HALF_BUFFER_SIZE - 1;
+    dsp_write(0x48); // 8-bit Auto-Init
     dsp_write(len & 0xFF);
     dsp_write((len >> 8) & 0xFF);
-    
-    terminal_printf("  [SB16] Playback started on DMA Channel 1!\n");
+    dsp_write(0x1C); // 8-bit Auto-Init Command
+}
+
+void sb16_stop_playback(void) {
+    dsp_write(0xDA); // Halt DMA
 }
 
 void sb16_handler(struct registers* regs) {
     (void)regs;
-    // Acknowledge DSP interrupt (8-bit)
-    inb(SB16_BASE + 0xE);
+    inb(SB16_BASE + 0xE); // Acknowledge DSP interrupt
+
+    // The DSP just finished playing one half.
+    // It's currently playing the OTHER half.
+    // So we need data for the half it just finished.
+    current_half = 1 - current_half;
+    
+    if (current_half == 0) {
+        // Just finished second half, now playing first half.
+        // We need data for the second half.
+        sb16_next_buffer = audio_buffer + HALF_BUFFER_SIZE;
+    } else {
+        // Just finished first half, now playing second half.
+        // We need data for the first half.
+        sb16_next_buffer = audio_buffer;
+    }
+    
+    sb16_needs_data = 1;
 }
