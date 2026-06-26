@@ -11,7 +11,7 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/snake.c src/calc.c src/clock.c src/wallpaper.c \
          src/paint.c src/ata.c src/fs.c src/fat16.c src/explorer.c src/speaker.c \
          src/minesweeper.c src/settings.c src/elf.c src/pci.c src/rtl8139.c \
-         src/ethernet.c src/arp.c src/ipv4.c src/icmp.c
+         src/ethernet.c src/arp.c src/ipv4.c src/icmp.c src/sb16.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
@@ -51,16 +51,19 @@ run: elsea.iso disk.img
 	qemu-system-i386 -cdrom elsea.iso \
 	    -drive file=disk.img,format=raw,index=0,media=disk \
 	    -netdev user,id=n0 -device rtl8139,netdev=n0 \
+	    -audiodev pa,id=snd0 -device sb16,audiodev=snd0 \
 	    -boot d
 
 run-uefi: elsea.iso disk.img
 	qemu-system-i386 -cdrom elsea.iso \
 	    -drive file=disk.img,format=raw,index=0,media=disk \
 	    -netdev user,id=n0 -device rtl8139,netdev=n0 \
+	    -audiodev pa,id=snd0 -device sb16,audiodev=snd0 \
 	    -bios /usr/share/ovmf/OVMF.fd -boot d 2>/dev/null || \
 	qemu-system-i386 -cdrom elsea.iso \
 	    -drive file=disk.img,format=raw,index=0,media=disk \
 	    -netdev user,id=n0 -device rtl8139,netdev=n0 \
+	    -audiodev pa,id=snd0 -device sb16,audiodev=snd0 \
 	    -boot d
 
 debug: elsea.iso disk.img

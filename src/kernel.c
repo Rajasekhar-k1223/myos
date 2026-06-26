@@ -27,6 +27,7 @@
 #include "fat16.h"
 #include "speaker.h"
 #include "rtl8139.h"
+#include "sb16.h"
 
 window_t* shell_window = 0;
 
@@ -429,6 +430,9 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
 
     // Initialize Networking
     rtl8139_init();
+
+    // Initialize Audio
+    sb16_init();
 
     shell_init();
 
