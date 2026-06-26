@@ -55,3 +55,5 @@ void wm_draw_string_window(window_t* win, uint32_t x, uint32_t y, const char* st
 void wm_putchar(window_t* win, char c);
 void wm_process_events(void);
 void wm_toast(const char* msg, uint32_t duration_ticks);
+void wm_set_wallpaper(const char* filename);
+void wm_draw_desktop_text(const char* str, float scale, int start_x, int start_y, uint32_t color);

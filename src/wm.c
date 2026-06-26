@@ -17,8 +17,7 @@
 #include "explorer.h"
 #include "speaker.h"
 #include "kheap.h"
-#include "minesweeper.h"
-#include "settings.h"
+#include "ttf.h"
 
 #define MAX_WINDOWS 10
 
@@ -37,6 +36,20 @@ static int num_icons = 0;
 
 static uint32_t* desktop_bg_buffer = 0;
 static window_t* focused_window = 0;
+
+void wm_draw_desktop_text(const char* str, float scale, int start_x, int start_y, uint32_t color) {
+    extern uint32_t vesa_width, vesa_height;
+    if (!desktop_bg_buffer) return;
+    float cur_x = start_x;
+    for (int i = 0; str[i] != '\0'; i++) {
+        uint16_t gid = ttf_get_glyph_index(str[i]);
+        if (gid) {
+            ttf_render_glyph(gid, scale, cur_x, start_y, desktop_bg_buffer, vesa_width, vesa_height, color);
+        }
+        cur_x += 1000.0f * scale; // Hacky fixed advance based on scale
+    }
+    wm_request_redraw();
+}
 
 // Window Dragging and Resizing State
 static int drag_win_idx = -1;

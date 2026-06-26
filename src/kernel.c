@@ -29,6 +29,7 @@
 #include "rtl8139.h"
 #include "sb16.h"
 #include "uhci.h"
+#include "ttf.h"
 
 window_t* shell_window = 0;
 
@@ -435,6 +436,16 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
     // Initialize Audio
     sb16_init();
     uhci_init();
+
+    // Initialize TTF
+    size_t font_size;
+    void* font_data = tar_get_file("font.ttf", &font_size);
+    if (font_data) {
+        ttf_init(font_data);
+        wm_draw_desktop_text("ElseaOS TTF Vector Math Engine!", 0.04f, 50, 150, 0xFFFFFF);
+    } else {
+        terminal_printf("[TTF] Error: font.ttf not found in initrd\n");
+    }
 
     shell_init();
 
