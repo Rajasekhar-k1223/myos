@@ -69,6 +69,7 @@ int pci_get_device_by_vendor(uint16_t vendor, uint16_t device, pci_device_t* out
 void pci_enable_bus_mastering(pci_device_t* dev) {
     uint16_t cmd = pci_read_config_16(dev->bus, dev->slot, dev->func, 0x04);
     cmd |= 0x0004; // Bus Master Enable
+    cmd |= 0x0002; // Memory Space Enable
     pci_write_config_16(dev->bus, dev->slot, dev->func, 0x04, cmd);
 }
 

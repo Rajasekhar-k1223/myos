@@ -43,8 +43,66 @@ typedef struct {
     uint32_t p_align;
 } __attribute__((packed)) Elf32_Phdr;
 
+#define PT_DYNAMIC 2
+
+typedef struct {
+    int32_t d_tag;
+    union {
+        uint32_t d_val;
+        uint32_t d_ptr;
+    } d_un;
+} Elf32_Dyn;
+
+#define DT_NULL 0
+#define DT_NEEDED 1
+#define DT_PLTRELSZ 2
+#define DT_PLTGOT 3
+#define DT_HASH 4
+#define DT_STRTAB 5
+#define DT_SYMTAB 6
+#define DT_RELA 7
+#define DT_RELASZ 8
+#define DT_RELAENT 9
+#define DT_STRSZ 10
+#define DT_SYMENT 11
+#define DT_INIT 12
+#define DT_FINI 13
+#define DT_SONAME 14
+#define DT_RPATH 15
+#define DT_SYMBOLIC 16
+#define DT_REL 17
+#define DT_RELSZ 18
+#define DT_RELENT 19
+#define DT_PLTREL 20
+#define DT_DEBUG 21
+#define DT_TEXTREL 22
+#define DT_JMPREL 23
+
+typedef struct {
+    uint32_t r_offset;
+    uint32_t r_info;
+} Elf32_Rel;
+
+#define ELF32_R_SYM(info) ((info) >> 8)
+#define ELF32_R_TYPE(info) ((unsigned char)(info))
+
+#define R_386_32 1
+#define R_386_PC32 2
+#define R_386_GLOB_DAT 6
+#define R_386_JMP_SLOT 7
+#define R_386_RELATIVE 8
+
+typedef struct {
+    uint32_t st_name;
+    uint32_t st_value;
+    uint32_t st_size;
+    unsigned char st_info;
+    unsigned char st_other;
+    uint16_t st_shndx;
+} Elf32_Sym;
+
 uint32_t elf_load(const char* filename);
-void elf_load_and_run(const char* filename);
+int elf_load_and_run(const char* filename);
 int task_exec(const char* filename, struct registers* regs);
 
 #endif

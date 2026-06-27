@@ -8,12 +8,30 @@ int32_t mouse_x = 512;
 int32_t mouse_y = 384;
 
 static uint8_t mouse_cycle = 0;
-static uint8_t mouse_byte[3];
+static uint8_t mouse_byte[4];
 static uint8_t mouse_buttons = 0;
+static uint8_t mouse_has_wheel = 0;
 
 int32_t mouse_get_x(void) { return mouse_x; }
 int32_t mouse_get_y(void) { return mouse_y; }
 uint8_t mouse_get_buttons(void) { return mouse_buttons; }
+
+void mouse_handler_inject(int rel_x, int rel_y, int z_delta, uint8_t buttons) {
+    mouse_buttons = buttons;
+    mouse_x += rel_x;
+    mouse_y -= rel_y; 
+    
+    extern uint32_t vesa_width, vesa_height;
+    if (mouse_x < 0) mouse_x = 0;
+    if (mouse_y < 0) mouse_y = 0;
+    if (mouse_x > (int)vesa_width - 1) mouse_x = vesa_width - 1;
+    if (mouse_y > (int)vesa_height - 1) mouse_y = vesa_height - 1;
+    
+    extern void wm_request_redraw(void);
+    extern void wm_process_scroll(int delta);
+    if (z_delta != 0) wm_process_scroll(z_delta);
+    wm_request_redraw();
+}
 
 static void mouse_callback(struct registers* regs) {
     (void)regs;
@@ -33,28 +51,31 @@ static void mouse_callback(struct registers* regs) {
                 break;
             case 2:
                 mouse_byte[2] = mouse_in;
+                if (mouse_has_wheel) {
+                    mouse_cycle++;
+                } else {
+                    mouse_cycle = 0;
+                    goto process_packet;
+                }
+                break;
+            case 3:
+                mouse_byte[3] = mouse_in;
                 mouse_cycle = 0;
                 
-                mouse_buttons = mouse_byte[0] & 0x07; // 0x01 = Left, 0x02 = Right, 0x04 = Middle
-                
-                int rel_x = mouse_byte[1];
-                int rel_y = mouse_byte[2];
-                if (rel_x && (mouse_byte[0] & (1 << 4))) rel_x -= 256;
-                if (rel_y && (mouse_byte[0] & (1 << 5))) rel_y -= 256;
-                
-                mouse_x += rel_x;
-                mouse_y -= rel_y; 
-                
-                extern uint32_t vesa_width, vesa_height;
-                if (mouse_x < 0) mouse_x = 0;
-                if (mouse_y < 0) mouse_y = 0;
-                if (mouse_x > (int)vesa_width - 1) mouse_x = vesa_width - 1;
-                if (mouse_y > (int)vesa_height - 1) mouse_y = vesa_height - 1;
-                
-                // Let the WM know it needs to redraw!
-                extern void wm_request_redraw(void);
-                wm_request_redraw();
-                
+            process_packet:
+                {
+                    uint8_t buttons = mouse_byte[0] & 0x07;
+                    int rel_x = mouse_byte[1];
+                    int rel_y = mouse_byte[2];
+                    if (rel_x && (mouse_byte[0] & (1 << 4))) rel_x -= 256;
+                    if (rel_y && (mouse_byte[0] & (1 << 5))) rel_y -= 256;
+                    
+                    int z_delta = 0;
+                    if (mouse_has_wheel) {
+                        z_delta = (int8_t)mouse_byte[3];
+                    }
+                    mouse_handler_inject(rel_x, rel_y, z_delta, buttons);
+                }
                 break;
         }
         status = inb(0x64);
@@ -79,6 +100,11 @@ static void mouse_write(uint8_t write) {
     inb(0x60); // ACK
 }
 
+static uint8_t mouse_read(void) {
+    mouse_wait(0);
+    return inb(0x60);
+}
+
 void mouse_init(void) {
     mouse_wait(1);
     outb(0x64, 0xA8); // Enable auxiliary device
@@ -94,6 +120,21 @@ void mouse_init(void) {
     outb(0x60, status);
     
     mouse_write(0xF6); // Defaults
+    
+    // Enable Intellimouse extensions
+    mouse_write(0xF3); // Set sample rate
+    mouse_write(200);
+    mouse_write(0xF3); // Set sample rate
+    mouse_write(100);
+    mouse_write(0xF3); // Set sample rate
+    mouse_write(80);
+    
+    mouse_write(0xF2); // Get device id
+    uint8_t mouse_id = mouse_read();
+    if (mouse_id == 3) {
+        mouse_has_wheel = 1;
+    }
+    
     mouse_write(0xF4); // Enable streaming
     
     register_interrupt_handler(44, mouse_callback);

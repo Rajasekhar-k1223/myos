@@ -11,7 +11,10 @@ static uint16_t ip_id = 1;
 
 void ipv4_receive_packet(uint8_t* payload, uint32_t length) {
     if (length < sizeof(ipv4_header_t)) return;
-    
+    /* Deliver copy to any open raw sockets before protocol dispatch */
+    extern void raw_socket_deliver(const uint8_t*, uint32_t);
+    raw_socket_deliver(payload, length);
+
     ipv4_header_t* ip = (ipv4_header_t*)payload;
     if (ip->dst_ip != MY_IP && ip->dst_ip != 0xFFFFFFFF) return;
     

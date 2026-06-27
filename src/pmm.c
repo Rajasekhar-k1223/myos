@@ -44,6 +44,17 @@ void pmm_init(uint32_t mmap_tag_addr, uint32_t entry_size, uint32_t total_bytes)
         pmm_set(i);
 }
 
+void pmm_mark_used(uint32_t start, uint32_t size) {
+    uint32_t start_frame = start / PMM_FRAME_SIZE;
+    uint32_t end_frame = (start + size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+    for (uint32_t i = start_frame; i < end_frame; i++) {
+        if (!pmm_test(i)) {
+            pmm_set(i);
+            pmm_used_frames++;
+        }
+    }
+}
+
 void* pmm_alloc_frame(void) {
     for (uint32_t i = 0; i < pmm_max_frames; i++) {
         if (!pmm_test(i)) {

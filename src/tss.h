@@ -31,5 +31,5 @@ struct tss_entry_struct {
     uint16_t iomap_base;
 } __attribute__((packed));
 
-void tss_init(uint32_t num, uint32_t ss0, uint32_t esp0);
-void tss_set_stack(uint32_t ss0, uint32_t esp0);
+void tss_init(uint32_t core_idx, uint32_t gdt_num, uint32_t ss0, uint32_t esp0);
+void tss_set_stack(uint32_t core_idx, uint32_t ss0, uint32_t esp0);

@@ -2,6 +2,8 @@
 #include "idt.h"
 #include "io.h"
 #include "task.h"
+#include "acpi.h"
+#include "apic.h"
 
 #define PIT_CHANNEL0  0x40
 #define PIT_CMD       0x43
@@ -13,14 +15,19 @@ static uint32_t          pit_hz          = 100;
 
 static void pit_callback(struct registers* r) {
     (void)r;
-    pit_ticks++;
-
+    extern void com1_print(const char*);
+    com1_print("?");
+    if (apic_get_id() == bsp_apic_id) {
+        com1_print("!");
+        pit_ticks++;
+        if (!sched_active) return;
+        task_tick(); /* decrement sleep counters */
+    }
+    
     if (!sched_active) return;
 
-    task_tick(); /* decrement sleep counters */
-
-    /* Preempt every 2 ticks (20 ms time slice) */
-    if (pit_ticks % 2 == 0)
+    /* Preempt every 2 ticks (20 ms time slice) on BSP, but on APs we just schedule always since LAPIC timer count can be tuned */
+    if (apic_get_id() != bsp_apic_id || pit_ticks % 2 == 0)
         schedule();
 }
 
@@ -31,6 +38,7 @@ void pit_init(uint32_t hz) {
     outb(PIT_CHANNEL0, divisor & 0xFF);
     outb(PIT_CHANNEL0, (divisor >> 8) & 0xFF);
     register_interrupt_handler(32, pit_callback);
+    register_interrupt_handler(48, pit_callback);
 }
 
 void pit_enable_scheduling(void) {

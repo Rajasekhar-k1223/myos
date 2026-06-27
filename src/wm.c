@@ -1,4 +1,5 @@
 #include "wm.h"
+#include "sdl_shim.h"
 #include "mouse.h"
 #include "vesa.h"
 #include "kheap.h"
@@ -18,6 +19,7 @@
 #include "speaker.h"
 #include "kheap.h"
 #include "ttf.h"
+#include "widget.h"
 
 #define MAX_WINDOWS 10
 
@@ -65,6 +67,11 @@ static int       scrollbar_track_y = 0;   /* screen-y of the scrollbar track top
 static int       scrollbar_track_h = 0;   /* height of the track in pixels           */
 
 #define SB_W 10  /* scrollbar width in pixels */
+
+/* Notepad Find bar */
+static int  find_active = 0;
+static char find_buf[64] = "";
+static int  find_len     = 0;
 
 /* Window snap */
 #define SNAP_ZONE 24          /* pixels from edge that triggers snap  */
@@ -157,20 +164,50 @@ void wm_init(void) {
     extern uint32_t vesa_width, vesa_height;
     vesa_init_backbuffer();
     vesa_set_double_buffer(1);
-    
+
     current_theme = theme_win95;
-    
+
+    // ── Gradient Desktop Background (deep space / aurora) ────────────────────
     desktop_bg_buffer = (uint32_t*)kmalloc(vesa_width * vesa_height * 4);
-    for (uint32_t i = 0; i < vesa_width * vesa_height; i++) {
-        desktop_bg_buffer[i] = 0x008080;
-    }
-    
-    extern void bmp_load_to_buffer(const char*, uint32_t*, int, int, int, int);
-    // Tile logo.bmp across the desktop
-    for (int y = 0; y < (int)vesa_height; y += 150) {
-        for (int x = 0; x < (int)vesa_width; x += 250) {
-            bmp_load_to_buffer("logo.bmp", desktop_bg_buffer, vesa_width, vesa_height, x, y);
+    for (uint32_t row = 0; row < vesa_height; row++) {
+        // Vertical gradient: deep navy → teal-purple
+        uint8_t t = (uint8_t)((row * 255) / (vesa_height > 1 ? vesa_height - 1 : 1));
+        uint32_t top_c = 0x0A0A1E; // deep navy
+        uint32_t bot_c = 0x1A0A2E; // deep violet
+        uint32_t base  = widget_blend_color(top_c, bot_c, t);
+
+        for (uint32_t col = 0; col < vesa_width; col++) {
+            // Subtle horizontal shimmer
+            uint8_t h = (uint8_t)((col * 40) / (vesa_width > 1 ? vesa_width - 1 : 1));
+            uint32_t shimmer = widget_blend_color(base, 0x112244, h);
+            desktop_bg_buffer[row * vesa_width + col] = shimmer;
         }
+    }
+
+    // Overlay logo tiles with low opacity blend
+    extern void bmp_load_to_buffer(const char*, uint32_t*, int, int, int, int);
+    // Load logo to a temp buffer and alpha-blend onto gradient
+    uint32_t* logo_tmp = (uint32_t*)kmalloc(250 * 150 * 4);
+    if (logo_tmp) {
+        memset(logo_tmp, 0, 250 * 150 * 4);
+        bmp_load_to_buffer("logo.bmp", logo_tmp, 250, 150, 0, 0);
+        for (int tile_y = 0; tile_y < (int)vesa_height; tile_y += 150) {
+            for (int tile_x = 0; tile_x < (int)vesa_width; tile_x += 250) {
+                for (int ly = 0; ly < 150; ly++) {
+                    for (int lx = 0; lx < 250; lx++) {
+                        int px = tile_x + lx, py = tile_y + ly;
+                        if ((uint32_t)px >= vesa_width || (uint32_t)py >= vesa_height) continue;
+                        uint32_t logo_px = logo_tmp[ly * 250 + lx];
+                        if (logo_px == 0) continue;
+                        uint32_t bg_px = desktop_bg_buffer[py * vesa_width + px];
+                        // Blend logo at 15% opacity
+                        desktop_bg_buffer[py * vesa_width + px] =
+                            widget_blend_color(bg_px, logo_px, 38);
+                    }
+                }
+            }
+        }
+        kfree(logo_tmp);
     }
     
     memset(icon_term_buf, 0, sizeof(icon_term_buf));
@@ -485,6 +522,49 @@ int wm_handle_shortcut(char key) {
         }
         return 1;
     }
+    /* Ctrl+[ / Ctrl+] — window opacity */
+    if (key == '[') {
+        if (focused_window) {
+            focused_window->alpha = (focused_window->alpha > 30) ? focused_window->alpha - 25 : 30;
+            char _omsg[32]; sprintf(_omsg, "Opacity: %d%%", (focused_window->alpha * 100) / 255);
+            wm_toast(_omsg, 80);
+            redraw_needed = 1;
+        }
+        return 1;
+    }
+    if (key == ']') {
+        if (focused_window) {
+            int _na = (int)focused_window->alpha + 25;
+            focused_window->alpha = (uint8_t)(_na > 255 ? 255 : _na);
+            char _omsg[32]; sprintf(_omsg, "Opacity: %d%%", (focused_window->alpha * 100) / 255);
+            wm_toast(_omsg, 80);
+            redraw_needed = 1;
+        }
+        return 1;
+    }
+    /* Ctrl+F — Notepad Find */
+    if (key == 'f' || key == 'F') {
+        if (focused_window && focused_window->text_buf) {
+            find_active = 1;
+            find_len    = 0;
+            find_buf[0] = '\0';
+            wm_toast("Find: type search term, Enter to search", 250);
+            redraw_needed = 1;
+        }
+        return 1;
+    }
+    /* Ctrl+Shift+1..4 — move focused window to another desktop */
+    if (key == '!' || key == '@' || key == '#' || key == '$') {
+        int _tgt = (key == '!') ? 0 : (key == '@') ? 1 : (key == '#') ? 2 : 3;
+        if (focused_window) {
+            focused_window->desktop_id = _tgt;
+            char _tmsg[48];
+            sprintf(_tmsg, "Window moved to Desktop %d", _tgt + 1);
+            wm_toast(_tmsg, 180);
+            redraw_needed = 1;
+        }
+        return 1;
+    }
     /* Ctrl+1..4 — switch virtual desktop */
     if (key >= '1' && key <= '0' + NUM_DESKTOPS) {
         int target = key - '1';
@@ -562,37 +642,105 @@ void wm_putchar(window_t* win, char c) {
     }
 
     if (win->term_grid) {
-        /* ANSI Escape Parsing */
-        if (win->ansi_state == 1) {
-            if (c == '[') win->ansi_state = 2;
-            else win->ansi_state = 0;
-            return;
-        } else if (win->ansi_state == 2) {
+        /* ── Full ANSI / VT100 escape sequence parser ──────────────────── */
+        static const uint32_t ansi_pal[8] = {
+            0x000000, 0xCC0000, 0x00CC00, 0xCC8800,
+            0x0000CC, 0xCC00CC, 0x00CCCC, 0xCCCCCC
+        };
+        static const uint32_t ansi_bright[8] = {
+            0x555555, 0xFF5555, 0x55FF55, 0xFFFF55,
+            0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF
+        };
+
+        if (win->ansi_state == 1) {          /* saw ESC */
+            if (c == '[') { win->ansi_state = 2; return; }
+            if (c == 'c') { /* RIS — reset terminal */
+                win->fg_color = 0xAAAAAA; win->bg_color = 0x000000;
+                win->ansi_bold = 0;
+                win->cursor_x = 0; win->term_line = 0;
+            }
+            win->ansi_state = 0; return;
+        }
+        if (win->ansi_state == 2) {          /* inside ESC[ */
             if (c >= '0' && c <= '9') {
-                win->ansi_param = win->ansi_param * 10 + (c - '0');
-                return;
-            } else if (c == 'm') {
-                uint32_t ansi_colors[8] = {0x000000, 0xAA0000, 0x00AA00, 0xAA5500, 0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA};
-                if (win->ansi_param >= 30 && win->ansi_param <= 37) {
-                    win->fg_color = ansi_colors[win->ansi_param - 30];
-                } else if (win->ansi_param == 0) {
-                    win->fg_color = 0xAAAAAA;
-                }
-                win->ansi_state = 0;
-                win->ansi_param = 0;
-                return;
-            } else if (c == ';') {
-                /* Ignore complex codes for now */
-                win->ansi_state = 0;
-                return;
-            } else {
-                win->ansi_state = 0;
+                if (win->ansi_param_idx < 8)
+                    win->ansi_params[win->ansi_param_idx] =
+                        win->ansi_params[win->ansi_param_idx] * 10 + (c - '0');
                 return;
             }
+            if (c == ';') {
+                win->ansi_param_idx++;
+                if (win->ansi_param_idx >= 8) win->ansi_param_idx = 7;
+                return;
+            }
+            /* Finalise params */
+            int np = win->ansi_param_idx + 1;
+            int* p = win->ansi_params;
+            win->ansi_param = p[0]; /* legacy */
+
+            if (c == 'm') {
+                for (int pi = 0; pi < np; pi++) {
+                    int v = p[pi];
+                    if (v == 0)  { win->fg_color = 0xAAAAAA; win->bg_color = 0x000000; win->ansi_bold = 0; }
+                    else if (v == 1)  win->ansi_bold = 1;
+                    else if (v == 2 || v == 22) win->ansi_bold = 0;
+                    else if (v >= 30 && v <= 37) win->fg_color = win->ansi_bold ? ansi_bright[v-30] : ansi_pal[v-30];
+                    else if (v >= 90 && v <= 97) win->fg_color = ansi_bright[v-90];
+                    else if (v == 39) win->fg_color = 0xAAAAAA;
+                    else if (v >= 40 && v <= 47) win->bg_color = ansi_pal[v-40];
+                    else if (v >= 100&&v<=107)   win->bg_color = ansi_bright[v-100];
+                    else if (v == 49) win->bg_color = 0x000000;
+                }
+            } else if (c == 'H' || c == 'f') { /* CUP — cursor position */
+                int row = (np >= 1 && p[0] > 0) ? p[0]-1 : 0;
+                int col = (np >= 2 && p[1] > 0) ? p[1]-1 : 0;
+                win->term_line = (uint32_t)(row < (int)win->term_rows ? row : (int)win->term_rows-1);
+                win->cursor_x  = (uint32_t)(col < (int)win->term_cols ? col : (int)win->term_cols-1) * 8;
+            } else if (c == 'A') { /* CUU — cursor up */
+                int n = p[0] ? p[0] : 1;
+                win->term_line = (win->term_line >= (uint32_t)n) ? win->term_line - n : 0;
+            } else if (c == 'B') { /* CUD — cursor down */
+                int n = p[0] ? p[0] : 1;
+                win->term_line = ((int)win->term_line+n < (int)win->term_rows) ? win->term_line+n : win->term_rows-1;
+            } else if (c == 'C') { /* CUF — cursor forward */
+                int n = (p[0] ? p[0] : 1) * 8;
+                win->cursor_x = ((int)win->cursor_x+n < (int)win->term_cols*8) ? win->cursor_x+n : (win->term_cols-1)*8;
+            } else if (c == 'D') { /* CUB — cursor back */
+                int n = (p[0] ? p[0] : 1) * 8;
+                win->cursor_x = ((int)win->cursor_x >= n) ? win->cursor_x-n : 0;
+            } else if (c == 'J') { /* ED — erase display */
+                if (p[0] == 2 || p[0] == 3) { /* clear whole screen */
+                    for (uint32_t i = 0; i < win->term_rows * win->term_cols; i++)
+                        win->term_grid[i] = (' ') | (win->fg_color << 8);
+                    win->term_line = 0; win->cursor_x = 0;
+                } else if (p[0] == 0) { /* clear to end */
+                    uint32_t pos = win->term_line * win->term_cols + win->cursor_x/8;
+                    for (uint32_t i = pos; i < win->term_rows * win->term_cols; i++)
+                        win->term_grid[i] = (' ') | (win->fg_color << 8);
+                }
+            } else if (c == 'K') { /* EL — erase line */
+                uint32_t col = win->cursor_x / 8;
+                if (p[0] == 0) { /* to end of line */
+                    for (uint32_t x = col; x < win->term_cols; x++)
+                        win->term_grid[win->term_line * win->term_cols + x] = (' ') | (win->fg_color << 8);
+                } else if (p[0] == 1) { /* to start */
+                    for (uint32_t x = 0; x <= col; x++)
+                        win->term_grid[win->term_line * win->term_cols + x] = (' ') | (win->fg_color << 8);
+                } else if (p[0] == 2) { /* whole line */
+                    for (uint32_t x = 0; x < win->term_cols; x++)
+                        win->term_grid[win->term_line * win->term_cols + x] = (' ') | (win->fg_color << 8);
+                }
+            } else if (c == 's') { /* save cursor */ /* no-op for now */ }
+              else if (c == 'u') { /* restore cursor */ /* no-op */ }
+            /* Reset parser */
+            win->ansi_state = 0; win->ansi_param_idx = 0;
+            for (int i = 0; i < 8; i++) win->ansi_params[i] = 0;
+            return;
         }
         if (c == '\033') {
             win->ansi_state = 1;
-            win->ansi_param = 0;
+            win->ansi_param_idx = 0;
+            for (int i = 0; i < 8; i++) win->ansi_params[i] = 0;
             return;
         }
         if (c == '\b') {
@@ -685,16 +833,34 @@ void wm_putchar(window_t* win, char c) {
     redraw_needed = 1;
 }
 
-/* ─── Toast notification ─────────────────────────────────────────────── */
+/* ─── Toast notification + history ──────────────────────────────────── */
 static char     toast_msg[80]  = "";
 static uint32_t toast_until    = 0;
+
+#define NOTIF_MAX 8
+static char notif_history[NOTIF_MAX][80];
+static int  notif_count = 0;
+static int  notif_panel_open = 0;
 
 void wm_toast(const char* msg, uint32_t duration_ticks) {
     strncpy(toast_msg, msg, 79);
     toast_msg[79] = '\0';
     toast_until = pit_get_ticks() + duration_ticks;
+    /* push to notification history (newest at top) */
+    if (notif_count < NOTIF_MAX) {
+        strncpy(notif_history[notif_count], msg, 79);
+        notif_history[notif_count][79] = '\0';
+        notif_count++;
+    } else {
+        for (int _ni = 0; _ni < NOTIF_MAX - 1; _ni++)
+            strcpy(notif_history[_ni], notif_history[_ni + 1]);
+        strncpy(notif_history[NOTIF_MAX - 1], msg, 79);
+        notif_history[NOTIF_MAX - 1][79] = '\0';
+    }
     redraw_needed = 1;
 }
+
+/* find_active/buf/len declared at file top */
 
 /* ─── Resize / Maximize helpers ──────────────────────────────────────── */
 static void wm_do_resize(window_t* w, uint32_t new_w, uint32_t new_h) {
@@ -729,6 +895,59 @@ static void wm_maximize_toggle(window_t* w) {
     redraw_needed = 1;
 }
 
+static void wm_update_system_monitor(window_t* w) {
+    if (!w || !w->buffer) return;
+    for (uint32_t _i = 0; _i < w->w * w->h; _i++) w->buffer[_i] = 0x0D1117;
+
+    extern uint32_t pmm_get_max_frames(void);
+    extern uint32_t pmm_get_used_frames(void);
+    extern uint32_t pit_get_seconds(void);
+    extern uint32_t task_count(void);
+
+    uint32_t max_f  = pmm_get_max_frames();
+    uint32_t used_f = pmm_get_used_frames();
+    uint32_t free_f = max_f > used_f ? max_f - used_f : 0;
+    uint32_t secs   = pit_get_seconds();
+    uint32_t ntasks = task_count();
+
+    char _line[80];
+    wm_draw_string_window(w, 10, 8,  "System Monitor", 0x58A6FF);
+
+    sprintf(_line, "Uptime:   %02u:%02u:%02u",
+            secs / 3600, (secs % 3600) / 60, secs % 60);
+    wm_draw_string_window(w, 10, 32, _line, 0xFFFFFF);
+
+    sprintf(_line, "RAM Used: %u MB / %u MB  (%u free)",
+            (used_f * 4) / 1024, (max_f * 4) / 1024, (free_f * 4) / 1024);
+    wm_draw_string_window(w, 10, 50, _line, 0xFFFFFF);
+
+    /* memory usage bar */
+    int _bw  = (int)w->w - 20;
+    int _pct = max_f > 0 ? (int)(used_f * 100 / max_f) : 0;
+    int _fill = _bw * _pct / 100;
+    for (int _y = 68; _y < 80; _y++)
+        for (int _x = 10; _x < 10 + _bw && _x < (int)w->w; _x++)
+            w->buffer[_y * w->w + _x] = _x < 10 + _fill ? 0x238636 : 0x21262D;
+    sprintf(_line, "%d%%", _pct);
+    wm_draw_string_window(w, 10 + _fill - 16 > 10 ? 10 + _fill - 16 : 10, 82, _line, 0x55FF88);
+
+    sprintf(_line, "Tasks:    %u running", ntasks);
+    wm_draw_string_window(w, 10, 100, _line, 0xFFFFFF);
+
+    sprintf(_line, "PIT:      100 Hz  (ticks: %u)", pit_get_ticks());
+    wm_draw_string_window(w, 10, 118, _line, 0xC9D1D9);
+
+    sprintf(_line, "Heap:     %u KB used", (used_f * 4));
+    wm_draw_string_window(w, 10, 136, _line, 0xC9D1D9);
+
+    wm_draw_string_window(w, 10, 160, "Network: eth0  10.0.2.15  RTL8139", 0x79C0FF);
+    wm_draw_string_window(w, 10, 178, "Audio:   SB16  8-bit PCM DMA", 0x79C0FF);
+    wm_draw_string_window(w, 10, 196, "Storage: ATA(FAT16) | AHCI(EXT2) | NVMe", 0x79C0FF);
+
+    wm_draw_string_window(w, 10, 220, "Press [x] to close", 0x484F58);
+    redraw_needed = 1;
+}
+
 static void wm_render(void) {
     extern uint32_t vesa_width, vesa_height;
     
@@ -742,34 +961,82 @@ static void wm_render(void) {
     
     // 1.5 Draw Desktop Icons (Removed for Modern Dock)
     
+    // 1.8 Update live System Monitor windows + Video Player tick
+    for (int _si = 0; _si < num_windows; _si++) {
+        window_t* _sw = &windows[_si];
+        if (!_sw->active || _sw->minimized || _sw->desktop_id != current_desktop) continue;
+        if (strncmp(_sw->title, "System Monitor", 14) == 0)
+            wm_update_system_monitor(_sw);
+        if (strncmp(_sw->title, "Video Player", 12) == 0) {
+            extern int video_player_tick(window_t*);
+            if (video_player_tick(_sw)) redraw_needed = 1;
+        }
+    }
+
     // 2. Draw Windows (current desktop only)
     for (int i = 0; i < num_windows; i++) {
         window_t* w = &windows[i];
         if (!w->active || w->minimized) continue;
         if (w->desktop_id != current_desktop) continue;
 
-        // Drop Shadow (8px offset)
-        if (w->alpha == 255) { // Only draw shadow for fully opaque windows (e.g. not Terminal)
-            vesa_draw_rect_alpha(w->x + 6, w->y + 6, w->w + 2, w->h + 22, 0x000000, 80);
+        // Drop Shadow (10px offset, softer)
+        vesa_draw_rect_alpha(w->x + 8, w->y + 8, w->w + 2, w->h + 22, 0x000000, 55);
+        vesa_draw_rect_alpha(w->x + 5, w->y + 5, w->w + 2, w->h + 22, 0x000000, 35);
+
+        // ── Window frame / border (1px, subtle glow for focused) ───────────────
+        uint32_t border_col = (w == focused_window) ? 0x4466AA : 0x222233;
+        uint8_t  border_a   = (w == focused_window) ? 180 : 110;
+        vesa_draw_rect_alpha(w->x - 1, w->y - 1, w->w + 2, w->h + 22,
+                             border_col, border_a);
+
+        // ── Title bar: gradient glass effect ───────────────────────────────────
+        uint32_t title_top, title_bot;
+        if (w == focused_window) {
+            title_top = widget_blend_color(current_theme.title_bg, 0xFFFFFF, 45);
+            title_bot = widget_blend_color(current_theme.title_bg, 0x000000, 50);
+        } else {
+            title_top = widget_blend_color(current_theme.title_inactive_bg, 0xFFFFFF, 20);
+            title_bot = current_theme.title_inactive_bg;
+        }
+        widget_draw_gradient_rect(w->x, w->y, w->w, 20, title_top, title_bot, w->alpha);
+
+        /* Title — TTF if loaded, bitmap fallback */
+        {
+            extern uint32_t vesa_get_fb_addr(void);
+            extern uint32_t vesa_width, vesa_height;
+            extern int ttf_is_loaded(void);
+            if (ttf_is_loaded()) {
+                uint32_t* _fb = (uint32_t*)vesa_get_fb_addr();
+                ttf_draw_string(_fb, (int)vesa_width, (int)vesa_height,
+                                (int)(w->x + 5), (int)(w->y + 2),
+                                w->title, 13, current_theme.title_fg);
+            } else {
+                wm_draw_string(w->x + 6, w->y + 3, w->title, 0x000000);
+                wm_draw_string(w->x + 5, w->y + 2, w->title, current_theme.title_fg);
+            }
+        }
+        /* Opacity indicator — small α% in title bar right area */
+        if (w == focused_window && w->alpha < 250) {
+            char _atxt[8]; sprintf(_atxt, "%d%%", (w->alpha * 100) / 255);
+            wm_draw_string(w->x + w->w - 75, w->y + 5, _atxt, 0xAABBCC);
         }
 
-        // Window Border (1px flat)
-        vesa_draw_rect_alpha(w->x - 1, w->y - 1, w->w + 2, w->h + 22, current_theme.window_border, w->alpha);
-        // Window Title bar (20px high)
-        vesa_draw_rect_alpha(w->x, w->y, w->w, 20, (w == focused_window) ? current_theme.title_bg : current_theme.title_inactive_bg, w->alpha);
-        wm_draw_string(w->x + 5, w->y + 2, w->title, current_theme.title_fg);
+        // ── Window control buttons (macOS-style circles) ────────────────────────
+        // Close — red
+        widget_draw_rounded_rect(w->x + w->w - 19, w->y + 3, 14, 14, 7,
+                                 0xCC3333, w->alpha);
+        wm_draw_string(w->x + w->w - 16, w->y + 5, "x", 0x800000);
 
-        // Maximize button (green □ — or ❐ when already maximized)
-        vesa_draw_rect_alpha(w->x + w->w - 58, w->y + 2, 16, 16, 0x007700, w->alpha);
-        wm_draw_string(w->x + w->w - 55, w->y + 6, w->maximized ? "v" : "^", 0xFFFFFF);
+        // Minimize — yellow
+        widget_draw_rounded_rect(w->x + w->w - 37, w->y + 3, 14, 14, 7,
+                                 0xCCAA00, w->alpha);
+        wm_draw_string(w->x + w->w - 34, w->y + 5, "_", 0x664400);
 
-        // Minimize button (yellow _ )
-        vesa_draw_rect_alpha(w->x + w->w - 38, w->y + 2, 16, 16, 0xC09000, w->alpha);
-        wm_draw_string(w->x + w->w - 35, w->y + 6, "_", 0xFFFFFF);
-
-        // Close button (red x)
-        vesa_draw_rect_alpha(w->x + w->w - 18, w->y + 2, 16, 16, 0xC00000, w->alpha);
-        wm_draw_string(w->x + w->w - 14, w->y + 6, "x", 0xFFFFFF);
+        // Maximize — green
+        widget_draw_rounded_rect(w->x + w->w - 55, w->y + 3, 14, 14, 7,
+                                 0x33AA33, w->alpha);
+        wm_draw_string(w->x + w->w - 52, w->y + 5,
+                       w->maximized ? "v" : "^", 0x004400);
 
         // Draw the inner buffer with Alpha Transparency
         for (uint32_t yy = 0; yy < w->h; yy++) {
@@ -864,17 +1131,50 @@ static void wm_render(void) {
         }
     }
 
-    // 3. Draw Top Bar (Modern Linux Style)
-    vesa_draw_rect(0, 0, vesa_width, 24, current_theme.taskbar_bg);
-    
-    // Activities Button
-    if (start_btn_pressed) {
-        vesa_draw_rect(0, 0, 80, 24, 0x000000); // Pressed shadow
+    // ── Top Bar (glass style) ─────────────────────────────────────────────────
+    widget_draw_gradient_rect(0, 0, (int)vesa_width, 24,
+                              0x1A1A2E, 0x0A0A18, 230);
+    // Top bar highlight
+    for (uint32_t col = 0; col < vesa_width; col++)
+        vesa_putpixel_alpha(col, 0, 0xFFFFFF, 30);
+    for (uint32_t col = 0; col < vesa_width; col++)
+        vesa_putpixel_alpha(col, 23, 0x000000, 80);
+
+    // Activities Button (pill style)
+    widget_draw_rounded_rect(4, 3, 82, 18, 5,
+                             start_btn_pressed ? 0x223366 : 0x334477, 220);
+    wm_draw_string(8, 7, "Activities", current_theme.title_fg);
+
+    // Centered Clock (badge style)
+    {
+        int cw = (int)strlen(clock_str) * 8 + 14;
+        int cx = ((int)vesa_width - cw) / 2;
+        widget_draw_rounded_rect(cx, 3, cw, 18, 5, 0x111133, 180);
+        wm_draw_string((uint32_t)(cx + 7), 7, clock_str, current_theme.title_fg);
     }
-    wm_draw_string(8, 8, "Activities", current_theme.title_fg);
-    
-    // Centered Clock
-    wm_draw_string(vesa_width / 2 - (strlen(clock_str) * 4), 8, clock_str, current_theme.title_fg);
+
+    // Bell (notification) icon — left of desktop dots
+    {
+        int bell_x = (int)vesa_width - NUM_DESKTOPS * 16 - 36;
+        uint32_t bell_col = notif_count > 0 ? 0xFFCC44 : 0x445566;
+        widget_draw_rounded_rect(bell_x, 3, 18, 18, 4, bell_col, 200);
+        wm_draw_string((uint32_t)(bell_x + 5), 7, notif_count > 0 ? "!" : "o", 0x000000);
+        /* Notification history panel */
+        if (notif_panel_open && notif_count > 0) {
+            int pw = 280, ph = notif_count * 20 + 10;
+            int px = (int)vesa_width - pw - 4;
+            int py = 26;
+            widget_draw_glass(px, py, pw, ph, 0x0D1117, 240, 1);
+            wm_draw_string((uint32_t)(px + 6), (uint32_t)(py + 4), "Notifications", 0x58A6FF);
+            for (int _nb = 0; _nb < notif_count; _nb++) {
+                int _ny = py + 6 + (_nb + 1) * 18;
+                char _ntxt[82]; _ntxt[0] = '\xAE'; _ntxt[1] = ' ';
+                strncpy(_ntxt + 2, notif_history[notif_count - 1 - _nb], 76);
+                _ntxt[78] = '\0';
+                wm_draw_string((uint32_t)(px + 6), (uint32_t)_ny, _ntxt, 0xC9D1D9);
+            }
+        }
+    }
 
     // Desktop indicator dots (top-right)
     {
@@ -895,67 +1195,65 @@ static void wm_render(void) {
         }
     }
     
-    // Bottom Dock (Modern floating launcher)
-    int dock_w = 800;
+    // ── Bottom Dock (glass floating launcher) ─────────────────────────────────
+    int dock_w = 1000;
     int dock_h = 50;
-    int dock_x = (vesa_width - dock_w) / 2;
-    int dock_y = vesa_height - dock_h - 10;
+    int dock_x = ((int)vesa_width - dock_w) / 2;
+    int dock_y = (int)vesa_height - dock_h - 10;
+
+    // Glass dock base
+    widget_draw_glass(dock_x, dock_y, dock_w, dock_h,
+                      0x0A0A1E, 170, 2);  // deep navy tint, 2 blur passes
+
+    // Dock separator line at top
+    for (int col = dock_x + 8; col < dock_x + dock_w - 8; col++)
+        vesa_putpixel_alpha((uint32_t)col, (uint32_t)dock_y, 0x6688BB, 120);
     
-    // Draw rounded dock base
-    vesa_draw_rect(dock_x, dock_y, dock_w, dock_h, current_theme.taskbar_bg);
-    
-    // Helper to draw icon (with transparency treated as black=0)
+    // Dock icon helper (draws the BMP with a hover-like highlight area)
     void draw_dock_icon(int bx, int by, uint32_t* icon_buf) {
         if (!icon_buf) return;
         for (int y = 0; y < 32; y++) {
             for (int x = 0; x < 32; x++) {
                 uint32_t col = icon_buf[y * 32 + x];
-                if (col != 0) {
-                    vesa_putpixel_alpha(bx + x, by + y, col, 255);
-                }
+                if (col != 0) vesa_putpixel_alpha(bx + x, by + y, col, 255);
             }
         }
     }
-    
-    // Dock Icons
-    // Terminal (using new 32x32 BMP icon)
-    draw_dock_icon(dock_x + 14, dock_y + 9, icon_term_buf);
-    
-    // Files (Explorer) (using new 32x32 BMP icon)
-    draw_dock_icon(dock_x + 74, dock_y + 9, icon_expl_buf);
-    
-    // Snake
-    vesa_draw_rect(dock_x + 130, dock_y + 5, 40, 40, 0x00AA00);
-    wm_draw_string(dock_x + 135, dock_y + 20, "Snk", 0xFFFFFF);
-    // Reverser
-    vesa_draw_rect(dock_x + 190, dock_y + 5, 40, 40, 0xAA5500);
-    wm_draw_string(dock_x + 195, dock_y + 20, "Rev", 0xFFFFFF);
-    // Theme
-    vesa_draw_rect(dock_x + 250, dock_y + 5, 40, 40, 0xAA00AA);
-    wm_draw_string(dock_x + 255, dock_y + 20, "Thm", 0xFFFFFF);
-    // Calculator
-    vesa_draw_rect(dock_x + 310, dock_y + 5, 40, 40, 0x008080);
-    wm_draw_string(dock_x + 315, dock_y + 20, "Calc", 0xFFFFFF);
-    // Clock
-    vesa_draw_rect(dock_x + 370, dock_y + 5, 40, 40, 0x000000);
-    wm_draw_string(dock_x + 375, dock_y + 20, "Time", 0xFFFFFF);
-    // Wallpaper
-    vesa_draw_rect(dock_x + 430, dock_y + 5, 40, 40, 0x808000);
-    wm_draw_string(dock_x + 435, dock_y + 20, "Wall", 0xFFFFFF);
-    // Paint (using new 32x32 BMP icon)
+
+    // Helper: draw a dock app button (text-based) with gradient
+    void draw_dock_btn(int bx, int by, const char* label, uint32_t accent) {
+        widget_draw_rounded_rect(bx, by, 40, 40, 6,
+                                 widget_blend_color(accent, 0x000000, 60), 200);
+        widget_draw_gradient_rect(bx + 1, by + 1, 38, 19,
+                                  widget_blend_color(accent, 0xFFFFFF, 50),
+                                  accent, 200);
+        widget_draw_gradient_rect(bx + 1, by + 20, 38, 19,
+                                  accent,
+                                  widget_blend_color(accent, 0x000000, 80), 200);
+        // Top shine
+        for (int col = bx + 2; col < bx + 38; col++)
+            vesa_putpixel_alpha((uint32_t)col, (uint32_t)(by + 1), 0xFFFFFF, 50);
+        wm_draw_string(bx + 4, by + 14, label, 0xFFFFFF);
+    }
+
+    // Draw dock icons
+    draw_dock_icon(dock_x + 14,  dock_y + 9, icon_term_buf);
+    draw_dock_icon(dock_x + 74,  dock_y + 9, icon_expl_buf);
+    draw_dock_btn (dock_x + 130, dock_y + 5, "Snk",  0x006622);
+    draw_dock_btn (dock_x + 190, dock_y + 5, "Rev",  0x884400);
+    draw_dock_btn (dock_x + 250, dock_y + 5, "Thm",  0x660066);
+    draw_dock_btn (dock_x + 310, dock_y + 5, "Calc", 0x005566);
+    draw_dock_btn (dock_x + 370, dock_y + 5, "Time", 0x111133);
+    draw_dock_btn (dock_x + 430, dock_y + 5, "Wall", 0x555500);
     draw_dock_icon(dock_x + 494, dock_y + 9, icon_pnt_buf);
-    
-    // Explorer text button placeholder
-    vesa_draw_rect(dock_x + 550, dock_y + 5, 40, 40, 0xDAA520);
-    wm_draw_string(dock_x + 555, dock_y + 20, "Files", 0xFFFFFF);
-    // Notepad
-    vesa_draw_rect(dock_x + 610, dock_y + 5, 40, 40, 0x1A1A2E);
-    wm_draw_string(dock_x + 615, dock_y + 20, "Note", 0xE0E0E0);
-    // Minesweeper
-    vesa_draw_rect(dock_x + 670, dock_y + 5, 40, 40, 0x2D5A27);
-    wm_draw_string(dock_x + 675, dock_y + 20, "Mine", 0xFFFFFF);
-    // Theme Settings (using new 32x32 BMP icon)
+    draw_dock_btn (dock_x + 550, dock_y + 5, "File", 0x886600);
+    draw_dock_btn (dock_x + 610, dock_y + 5, "Note", 0x112244);
+    draw_dock_btn (dock_x + 670, dock_y + 5, "Mine",  0x1A4A10);
     draw_dock_icon(dock_x + 734, dock_y + 9, icon_sett_buf);
+    draw_dock_btn (dock_x + 798, dock_y + 5, "Sheet", 0x115511);
+    draw_dock_btn (dock_x + 858, dock_y + 5, "Vid",   0x331155);
+    draw_dock_btn (dock_x + 918, dock_y + 5, "PDF",   0x553311);
+    draw_dock_btn (dock_x + 978, dock_y + 5, "Edit",  0x224455);
     
     // 4. Draw Start Menu
     if (start_menu_open) {
@@ -991,21 +1289,38 @@ static void wm_render(void) {
         wm_draw_string(m_x + 35, m_y + 210, "Reboot", current_theme.menu_fg);
     }
     
-    // 5. Draw Toast Notification
+    // ── Toast Notification (animated, glass-style) ───────────────────────────
     if (toast_msg[0] && pit_get_ticks() < toast_until) {
-        int tw = (int)strlen(toast_msg) * 8 + 20;
+        int tw = (int)strlen(toast_msg) * 8 + 24;
         int tx = ((int)vesa_width  - tw) / 2;
-        int ty = (int)vesa_height - 50 - 10 - 50;   /* above dock */
-        vesa_draw_rect((uint32_t)tx - 2, (uint32_t)ty - 2,
-                       (uint32_t)tw + 4, 24, 0x111111);
-        vesa_draw_rect((uint32_t)tx, (uint32_t)ty,
-                       (uint32_t)tw, 20, 0x1E3A5F);
-        wm_draw_string((uint32_t)(tx + 10), (uint32_t)(ty + 2),
+        int ty = (int)vesa_height - dock_h - 10 - 36;
+
+        // Glass toast panel
+        widget_draw_glass(tx - 4, ty - 4, tw + 8, 30,
+                          0x1E3A5F, 200, 1);
+        // Accent left bar
+        vesa_draw_rect_alpha((uint32_t)(tx - 4), (uint32_t)(ty - 4),
+                             3, 30, 0x4499FF, 230);
+        // Text
+        wm_draw_string((uint32_t)(tx + 8), (uint32_t)(ty + 4),
                        toast_msg, 0xFFFFFF);
         redraw_needed = 1; /* keep redrawing until expired */
     } else if (toast_msg[0] && pit_get_ticks() >= toast_until) {
         toast_msg[0] = '\0';
         redraw_needed = 1;
+    }
+
+    // 5.3 Notepad Find bar overlay
+    if (find_active && focused_window && focused_window->text_buf) {
+        int _fx = (int)focused_window->x;
+        int _fy = (int)(focused_window->y + focused_window->h);
+        int _fw = (int)focused_window->w;
+        widget_draw_glass(_fx, _fy, _fw, 22, 0x1F2937, 240, 0);
+        wm_draw_string((uint32_t)(_fx + 4),  (uint32_t)(_fy + 4), "Find:", 0x79C0FF);
+        wm_draw_string((uint32_t)(_fx + 44), (uint32_t)(_fy + 4), find_buf,  0xFFFFFF);
+        /* cursor blink */
+        if (pit_get_ticks() % 50 < 25)
+            vesa_draw_rect((uint32_t)(_fx + 44 + find_len * 8), (uint32_t)(_fy + 4), 2, 13, 0xFFFFFF);
     }
 
     // 5.5 Draw Snap Preview
@@ -1149,6 +1464,16 @@ void wm_process_events(void) {
             clicked_on_something = 1;
         }
 
+        // Check bell / notification icon click (top bar)
+        if (!clicked_on_something && my >= 0 && my <= 24) {
+            int _bell_x = (int)vesa_width - NUM_DESKTOPS * 16 - 36;
+            if (mx >= _bell_x && mx <= _bell_x + 18) {
+                notif_panel_open = !notif_panel_open;
+                clicked_on_something = 1;
+                redraw_needed = 1;
+            }
+        }
+
         // Check desktop indicator dot clicks (top-right of top bar)
         if (!clicked_on_something && my >= 0 && my <= 24) {
             int dot_size = 12;
@@ -1207,9 +1532,9 @@ void wm_process_events(void) {
                 redraw_needed = 1;
             } else if (my >= (int)(m_y + 65) && my <= (int)(m_y + 85)) {
                 // Image Viewer
-                window_t* img_win = wm_create_window(250, 150, 500, 400, "Image Viewer - logo.bmp");
-                extern void bmp_load_to_window(const char* filename, window_t* win);
-                bmp_load_to_window("logo.bmp", img_win);
+                window_t* img_win = wm_create_window(250, 150, 500, 400, "Image Viewer");
+                extern void imgview_init(window_t*, const char*);
+                imgview_init(img_win, "logo.bmp");
                 start_menu_open = 0;
                 redraw_needed = 1;
             } else if (my >= (int)(m_y + 205) && my <= (int)(m_y + 225)) {
@@ -1293,6 +1618,26 @@ void wm_process_events(void) {
                     // Theme Settings
                     window_t* set_win = wm_create_window(200, 150, 300, 250, "Theme Settings");
                     settings_init(set_win);
+                } else if (mx >= dock_x + 798 && mx <= dock_x + 855) {
+                    // Spreadsheet
+                    extern void spreadsheet_init(window_t*);
+                    window_t* ss_win = wm_create_window(200, 100, 620, 420, "Spreadsheet");
+                    spreadsheet_init(ss_win);
+                } else if (mx >= dock_x + 858 && mx <= dock_x + 915) {
+                    // Video Player
+                    extern void video_player_init(window_t*);
+                    window_t* vp_win = wm_create_window(200, 100, 520, 380, "Video Player");
+                    video_player_init(vp_win);
+                } else if (mx >= dock_x + 918 && mx <= dock_x + 975) {
+                    // PDF Viewer
+                    extern void pdf_init(window_t*, const char*);
+                    window_t* pv_win = wm_create_window(200, 80, 500, 420, "PDF Viewer");
+                    pdf_init(pv_win, "readme.txt");
+                } else if (mx >= dock_x + 978 && mx <= dock_x + 1035) {
+                    // Text Editor
+                    extern void textedit_init(window_t*, const char*);
+                    window_t* te_win = wm_create_window(150, 80, 600, 440, "Text Editor");
+                    textedit_init(te_win, "");
                 }
             }
         }
@@ -1454,8 +1799,8 @@ void wm_process_events(void) {
                                 strcpy(title, "Image Viewer - ");
                                 strncat(title, name, 63);
                                 window_t* img_win = wm_create_window(250, 150, 500, 400, title);
-                                extern void bmp_load_to_window(const char*, window_t*);
-                                bmp_load_to_window(name, img_win);
+                                extern void imgview_init(window_t*, const char*);
+                                imgview_init(img_win, name);
                             } else if (len >= 4 && strcmp(&name[len-4], ".txt") == 0) {
                                 char title[100];
                                 strcpy(title, "Notepad - ");
@@ -1691,6 +2036,29 @@ void wm_process_events(void) {
         scrollbar_win = NULL;
     }
 
+    /* Forward mouse events to SDL ring buffer if a window is focused */
+    static int sdl_last_mx = 0, sdl_last_my = 0;
+    if (focused_window) {
+        int wx = mx - (int)focused_window->x;
+        int wy = my - (int)focused_window->y - 20;
+        int dx = mx - sdl_last_mx;
+        int dy = my - sdl_last_my;
+        if (dx != 0 || dy != 0)
+            sdl_push_mousemove(wx, wy, dx, dy);
+        if (left_click_just_pressed)
+            sdl_push_mousebutton(1, SDL_BUTTON_LEFT, wx, wy);
+        else if (left_click_just_released)
+            sdl_push_mousebutton(0, SDL_BUTTON_LEFT, wx, wy);
+        int right_just_pressed  = (btns & 2) && !(last_btns & 2);
+        int right_just_released = !(btns & 2) && (last_btns & 2);
+        if (right_just_pressed)
+            sdl_push_mousebutton(1, SDL_BUTTON_RIGHT, wx, wy);
+        else if (right_just_released)
+            sdl_push_mousebutton(0, SDL_BUTTON_RIGHT, wx, wy);
+    }
+    sdl_last_mx = mx;
+    sdl_last_my = my;
+
     last_btns = btns;
 
     // Force redraw for blinking cursor if focused window is text-based
@@ -1705,6 +2073,32 @@ void wm_process_events(void) {
 }
 
 int wm_handle_keypress(char c) {
+    /* Notepad Find bar intercepts all input when active */
+    if (find_active) {
+        if (c == '\n' || c == '\r') {
+            if (find_len > 0 && focused_window && focused_window->text_buf) {
+                char* _match = strstr(focused_window->text_buf, find_buf);
+                char _tmsg[80];
+                if (_match) {
+                    int _pos = (int)(_match - focused_window->text_buf);
+                    sprintf(_tmsg, "Found \"%s\" at pos %d", find_buf, _pos);
+                } else {
+                    sprintf(_tmsg, "Not found: \"%s\"", find_buf);
+                }
+                wm_toast(_tmsg, 300);
+            }
+            find_active = 0;
+            redraw_needed = 1;
+        } else if (c == '\b') {
+            if (find_len > 0) find_buf[--find_len] = '\0';
+            redraw_needed = 1;
+        } else if (c >= ' ' && c <= '~' && find_len < 63) {
+            find_buf[find_len++] = c;
+            find_buf[find_len]   = '\0';
+            redraw_needed = 1;
+        }
+        return 1;
+    }
     extern window_t* shell_window;
     if (focused_window && strncmp(focused_window->title, "Terminal", 8) == 0) {
         if (focused_window == shell_window) {
@@ -1725,6 +2119,45 @@ int wm_handle_keypress(char c) {
     } else if (focused_window && strncmp(focused_window->title, "Calculator", 10) == 0) {
         calc_handle_input(focused_window, c);
         return 1;
+    } else if (focused_window && strncmp(focused_window->title, "Image Viewer", 12) == 0) {
+        extern void imgview_handle_key(window_t*, char);
+        imgview_handle_key(focused_window, c);
+        return 1;
+    } else if (focused_window && strncmp(focused_window->title, "Spreadsheet", 11) == 0) {
+        extern void spreadsheet_handle_key(window_t*, char);
+        spreadsheet_handle_key(focused_window, c);
+        return 1;
+    } else if (focused_window && strncmp(focused_window->title, "Video Player", 12) == 0) {
+        extern void video_player_handle_key(window_t*, char);
+        video_player_handle_key(focused_window, c);
+        return 1;
+    } else if (focused_window && strncmp(focused_window->title, "PDF Viewer", 10) == 0) {
+        extern void pdf_handle_key(window_t*, char);
+        pdf_handle_key(focused_window, c);
+        return 1;
+    } else if (focused_window && strncmp(focused_window->title, "Text Editor", 11) == 0) {
+        extern void textedit_handle_key(window_t*, char);
+        textedit_handle_key(focused_window, c);
+        return 1;
     }
     return 0;
+}
+
+void wm_process_scroll(int delta) {
+    if (!focused_window) return;
+    
+    if (strncmp(focused_window->title, "Terminal", 8) == 0) {
+        focused_window->term_scroll += (delta * 3);
+        int lines_visible = focused_window->h / 16;
+        int max_scroll = focused_window->term_line + 1 - lines_visible;
+        if (max_scroll < 0) max_scroll = 0;
+        
+        if (focused_window->term_scroll < 0) focused_window->term_scroll = 0;
+        if (focused_window->term_scroll > max_scroll) focused_window->term_scroll = max_scroll;
+        wm_redraw_term(focused_window);
+        wm_request_redraw();
+    } else if (strncmp(focused_window->title, "Netscape", 8) == 0) {
+        extern void browser_handle_scroll(int);
+        browser_handle_scroll(delta);
+    }
 }

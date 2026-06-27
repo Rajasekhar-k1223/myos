@@ -1,13 +1,18 @@
 #include "gdt.h"
 
-#define GDT_ENTRIES 6
+#include "acpi.h"
+#include "apic.h"
+#include "kernel.h"
+
+#define GDT_ENTRIES (5 + MAX_CORES)
 
 static struct gdt_entry gdt[GDT_ENTRIES];
 static struct gdt_ptr   gp;
 
 extern void gdt_flush(uint32_t);
 extern void tss_flush(void);
-extern void tss_init(uint32_t num, uint32_t ss0, uint32_t esp0);
+extern void tss_flush_ap(uint16_t sel);
+extern void tss_init(uint32_t core_idx, uint32_t gdt_num, uint32_t ss0, uint32_t esp0);
 
 void gdt_set_entry_external(int num, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran) {
     gdt[num].base_low    = base & 0xFFFF;
@@ -32,9 +37,25 @@ void gdt_init(void) {
     gdt_set_entry(3, 0, 0xFFFFFFFF, 0xFA, 0xCF); /* user code */
     gdt_set_entry(4, 0, 0xFFFFFFFF, 0xF2, 0xCF); /* user data */
     
-    // Initialize TSS at segment 5, using a dummy kernel stack for now
-    tss_init(5, 0x10, 0x90000);
+    // Initialize TSS for BSP at segment 5
+    tss_init(bsp_apic_id, 5 + bsp_apic_id, 0x10, 0x90000);
 
     gdt_flush((uint32_t)&gp);
-    tss_flush();
+    
+    // We can only load TR after gdt_flush. But tss_flush hardcodes 0x28 in asm.
+    // Let's call a new asm function or just inline it:
+    asm volatile("ltr %%ax" : : "a"((5 + bsp_apic_id) * 8));
+}
+
+void gdt_init_ap(void) {
+    uint8_t id = apic_get_id();
+    
+    // Initialize TSS for this AP
+    tss_init(id, 5 + id, 0x10, 0x90000); // 0x90000 is dummy, will be updated per-task
+    
+    // Load the shared GDT
+    gdt_flush((uint32_t)&gp);
+    
+    // Load TR for this core
+    asm volatile("ltr %%ax" : : "a"((5 + id) * 8));
 }

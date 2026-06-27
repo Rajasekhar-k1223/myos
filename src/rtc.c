@@ -21,13 +21,16 @@ static uint8_t bcd2bin(uint8_t v) {
 void rtc_read(struct rtc_time* t) {
     struct rtc_time a, b;
     /* Double-read until two consecutive reads agree (avoids mid-update reads) */
+    /* Double-read until two consecutive reads agree (avoids mid-update reads) */
     do {
-        while (rtc_updating());
+        int timeout = 100000;
+        while (rtc_updating() && timeout-- > 0);
         a.second = cmos_read(0x00); a.minute = cmos_read(0x02);
         a.hour   = cmos_read(0x04); a.day    = cmos_read(0x07);
         a.month  = cmos_read(0x08); a.year   = cmos_read(0x09);
 
-        while (rtc_updating());
+        int timeout2 = 100000;
+        while (rtc_updating() && timeout2-- > 0);
         b.second = cmos_read(0x00); b.minute = cmos_read(0x02);
         b.hour   = cmos_read(0x04); b.day    = cmos_read(0x07);
         b.month  = cmos_read(0x08); b.year   = cmos_read(0x09);

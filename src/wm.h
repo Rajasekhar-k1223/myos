@@ -28,7 +28,10 @@ typedef struct {
     int      term_scroll;
     /* ANSI Escape State */
     int      ansi_state;
-    int      ansi_param;
+    int      ansi_params[8]; /* semicolon-separated params */
+    int      ansi_param_idx;
+    int      ansi_param;     /* legacy: same as ansi_params[0] */
+    int      ansi_bold;
 } window_t;
 
 typedef struct {

@@ -52,13 +52,19 @@ context_switch:
     popf
     /* restore stack pointer */
     mov  12(%ecx), %esp
-    /* jump to saved EIP (return into the new task's caller) */
-    jmp *32(%ecx)
+    /* jump to caller by popping return address from restored stack */
+    ret
 
 .global jump_usermode
 jump_usermode:
     /* context_switch restored esp to our kernel stack, and jumped here */
     /* We placed an IRET frame on the stack: SS, ESP, EFLAGS, CS, EIP */
+    /* Set up user data segments before returning to Ring 3 */
+    mov $0x23, %ax
+    mov %ax, %ds
+    mov %ax, %es
+    mov %ax, %fs
+    mov %ax, %gs
     /* To cleanly jump to Ring 3, we just execute iret */
     iret
 

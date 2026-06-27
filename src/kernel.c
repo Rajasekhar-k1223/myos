@@ -105,14 +105,57 @@ static void putentryat(char c, uint8_t color, uint32_t x, uint32_t y) {
     }
 }
 
+static int ansi_state = 0;
+static int ansi_param = 0;
+
 void terminal_putchar(char c) {
     if (shell_window && shell_window->active) {
         wm_putchar(shell_window, c);
         return;
     }
-    uint32_t cols = vesa_width  / FONT_W;   /* 8×16 font: 128 cols at 1024px */
-    uint32_t rows = vesa_height / FONT_H;   /* 8×16 font:  48 rows at 768px  */
+    uint32_t cols = vesa_width  / FONT_W;
+    uint32_t rows = vesa_height / FONT_H;
     if (cols == 0) return;
+
+    /* ANSI Escape Parser State Machine */
+    if (ansi_state == 1) {
+        if (c == '[') { ansi_state = 2; ansi_param = 0; }
+        else ansi_state = 0;
+        return;
+    } else if (ansi_state == 2) {
+        if (c >= '0' && c <= '9') {
+            ansi_param = ansi_param * 10 + (c - '0');
+            return;
+        } else if (c == 'm') {
+            if (ansi_param == 0) term_color = 0xAAAAAA;
+            else if (ansi_param >= 30 && ansi_param <= 37) term_color = 0xFFFFFF;
+            ansi_state = 0;
+            return;
+        } else if (c == 'J') {
+            if (ansi_param == 2) {
+                term_col = 0; term_row = 0;
+                for (uint32_t y = 0; y < rows; y++)
+                    for (uint32_t x = 0; x < cols; x++)
+                        putentryat(' ', term_color, x, y);
+            }
+            ansi_state = 0;
+            return;
+        } else if (c == 'H' || c == 'f') {
+            term_col = 0; term_row = 0;
+            ansi_state = 0;
+            return;
+        } else if (c == ';') {
+            ansi_param = 0;
+            return;
+        }
+        ansi_state = 0;
+        return;
+    }
+
+    if (c == '\033') {
+        ansi_state = 1;
+        return;
+    }
 
     switch (c) {
     case '\n':

@@ -11,6 +11,9 @@
 #include "fs.h"
 #include "fat16.h"
 #include "speaker.h"
+#include "wm.h"
+#include "dns.h"
+#include "tcp.h"
 
 /* ── Buffer / state ──────────────────────────────────────────────────────── */
 #define BUF_SIZE      256
@@ -65,13 +68,23 @@ static void cmd_help(void) {
         {"calc",    "simple arithmetic  (calc 3+5*2)"},
         {"color",   "set terminal color  (color fg bg)"},
         {"ps",      "list running tasks"},
-        {"fat ls",  "list files on FAT16 disk"},
-        {"fat read","read a disk file  (fat read notes.txt)"},
+        {"fat ls",   "list files on FAT16 disk"},
+        {"fat read", "read a disk file  (fat read notes.txt)"},
         {"fat write","write a disk file  (fat write hi.txt Hello!)"},
-        {"fat del", "delete a disk file  (fat del hi.txt)"},
-        {"sleep",   "sleep N milliseconds  (sleep 500)"},
-        {"reboot",  "restart the machine"},
-        {"halt",    "power off / halt CPU"},
+        {"fat del",  "delete a disk file  (fat del hi.txt)"},
+        {"exec",     "run a Ring-3 ELF binary  (exec hello.elf)"},
+        {"ping",     "ping an IP  (ping 10.0.2.2)"},
+        {"ifconfig", "show network interface info"},
+        {"nslookup", "resolve hostname  (nslookup google.com)"},
+        {"netstat",  "show TCP connection state"},
+        {"arp",      "send ARP request to gateway"},
+        {"http_get", "HTTP GET  (http_get 10.0.2.2)"},
+        {"beep",     "beep at freq Hz  (beep 440)"},
+        {"c4",       "run C4 C compiler/interpreter"},
+        {"ps",       "list running tasks"},
+        {"sleep",    "sleep N milliseconds  (sleep 500)"},
+        {"reboot",   "restart the machine"},
+        {"halt",     "power off / halt CPU"},
     };
     for (size_t i = 0; i < sizeof(cmds)/sizeof(cmds[0]); i++) {
         terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
@@ -189,7 +202,7 @@ static void cmd_hexdump(const char* args) {
     uint32_t len  = (*p) ? (uint32_t)strtol(p, NULL, 0) : 64;
     if (len > 256) len = 256;
 
-    const uint8_t* ptr = (const uint8_t*)addr;
+    const uint8_t* ptr = (const uint8_t*)(uintptr_t)addr;
     for (uint32_t i = 0; i < len; i += 16) {
         terminal_printf("  %08x  ", addr + i);
         for (uint32_t j = 0; j < 16; j++) {
@@ -264,7 +277,10 @@ static void cmd_reboot(void) {
 }
 
 static void cmd_halt(void) {
-    terminal_writestring("  System halted. Safe to power off.\n");
+    terminal_writestring("  Shutting down via ACPI...\n");
+    extern void acpi_shutdown(void);
+    acpi_shutdown();
+    /* fallback if ACPI shutdown not available */
     __asm__ volatile("cli");
     for (;;) __asm__ volatile("hlt");
 }
@@ -284,6 +300,11 @@ static void execute(void) {
     if      (strcmp(cmd, "help")  == 0) cmd_help();
     else if (strcmp(cmd, "clear") == 0) terminal_clear();
     else if (strcmp(cmd, "info")  == 0) cmd_info();
+    else if (strcmp(cmd, "c4")    == 0) {
+        extern int elf_load_and_run(const char*);
+        int pid = elf_load_and_run("c4.elf");
+        if (pid > 0) task_waitpid(pid);
+    }
     else if (strcmp(cmd, "mem")   == 0) cmd_mem();
     else if (strcmp(cmd, "uptime")== 0) cmd_uptime();
     else if (strcmp(cmd, "date")  == 0) cmd_date();
@@ -410,48 +431,321 @@ static void execute(void) {
             terminal_writestring("  File not found.\n");
     }
     else if (strncmp(cmd, "exec ", 5) == 0) {
-        extern void elf_load_and_run(const char*);
-        elf_load_and_run(cmd + 5);
+        extern int elf_load_and_run(const char*);
+        int pid = elf_load_and_run(cmd + 5);
+        if (pid > 0) task_waitpid(pid);
     }
+    // ── http_get — supports both IP and hostname ──────────────────────────────
     else if (strncmp(cmd, "http_get ", 9) == 0) {
-        char* ip_str = cmd + 9;
-        uint32_t a, b, c, d;
+        char* target = cmd + 9;
+        uint32_t dest_ip = 0;
+
+        // Try DNS resolution (handles both raw IPs and hostnames)
+        if (!dns_resolve(target, &dest_ip)) {
+            terminal_printf("  Cannot resolve '%s'.\n", target);
+            goto done;
+        }
+
+        terminal_printf("  Connecting to %d.%d.%d.%d:80...\n",
+            (dest_ip >> 24)&0xFF, (dest_ip >> 16)&0xFF,
+            (dest_ip >>  8)&0xFF,  dest_ip & 0xFF);
+
+        if (!tcp_connect(dest_ip, 80)) goto done;
+
+        // Build minimal HTTP/1.0 request
+        char req[256];
+        snprintf(req, sizeof(req),
+            "GET / HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", target);
+        tcp_send_data((uint8_t*)req, strlen(req));
+
+        // Wait up to 5 s for data
+        uint32_t timeout = pit_get_ticks() + 5000;
+        while (!tcp_has_data && pit_get_ticks() < timeout) {}
+
+        if (tcp_has_data) {
+            terminal_writestring("\n--- HTTP RESPONSE ---\n");
+            terminal_writestring((char*)tcp_recv_buffer);
+            terminal_writestring("\n---------------------\n");
+        } else {
+            terminal_writestring("  No response received.\n");
+        }
+        tcp_close(0);
+    }
+
+    // ── nslookup — DNS hostname to IP lookup ─────────────────────────────────
+    else if (strncmp(cmd, "nslookup ", 9) == 0) {
+        char* hostname = cmd + 9;
+        uint32_t ip = 0;
+        terminal_printf("  Resolving '%s'...\n", hostname);
+        if (dns_resolve(hostname, &ip)) {
+            terminal_printf("  %s -> %d.%d.%d.%d\n", hostname,
+                (ip >> 24)&0xFF, (ip >> 16)&0xFF, (ip >> 8)&0xFF, ip & 0xFF);
+        } else {
+            terminal_printf("  DNS resolution failed for '%s'.\n", hostname);
+        }
+    }
+
+    // ── netstat — show current TCP connection status ──────────────────────────
+    else if (strcmp(cmd, "netstat") == 0) {
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+        terminal_writestring("\n  Active Network Connections:\n");
+        terminal_writestring("  ─────────────────────────────────────────\n");
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        if (tcp_is_connected) {
+            terminal_printf("  TCP  ESTABLISHED   RX=%u bytes\n", tcp_recv_len);
+        } else {
+            terminal_writestring("  TCP  IDLE\n");
+        }
+        terminal_writestring("  UDP  Ready (port handler dispatch active)\n");
+        terminal_writestring("  DNS  Cache ready (8.8.8.8)\n");
+        terminal_putchar('\n');
+    }
+
+    else if (strncmp(cmd, "c4", 2) == 0) {
+        terminal_printf("Executing c4.elf (C Compiler)...\n");
+        extern int elf_load_and_run(const char*);
+        int pid = elf_load_and_run("c4.elf");
+        if (pid > 0) task_waitpid(pid);
+    } else if (strncmp(cmd, "ping ", 5) == 0) {
+        // Parse IP
+        char* ip_str = cmd + 5;
+        uint32_t a = 0, b = 0, c = 0, d = 0;
         int i = 0, part = 0, val = 0;
         uint32_t ip = 0;
         while (ip_str[i]) {
             if (ip_str[i] == '.') {
                 ip |= (val << (24 - part * 8));
-                part++;
-                val = 0;
+                part++; val = 0;
             } else if (ip_str[i] >= '0' && ip_str[i] <= '9') {
                 val = val * 10 + (ip_str[i] - '0');
             }
             i++;
         }
-        ip |= val; // Last part
-        
-        terminal_printf("  Connecting to HTTP Server at %d.%d.%d.%d...\n", (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
-        extern int tcp_connect(uint32_t, uint16_t);
-        if (tcp_connect(ip, 80)) {
-            char* get_req = "GET / HTTP/1.1\r\nHost: myos\r\nConnection: close\r\n\r\n";
-            extern int tcp_send_data(uint8_t*, uint32_t);
-            tcp_send_data((uint8_t*)get_req, strlen(get_req));
-            
-            extern volatile int tcp_has_data;
-            extern uint8_t tcp_recv_buffer[4096];
-            uint32_t timeout = pit_get_ticks() + 5000;
-            while (!tcp_has_data && pit_get_ticks() < timeout);
-            
-            if (tcp_has_data) {
-                terminal_writestring("\n--- HTTP RESPONSE ---\n");
-                terminal_writestring((char*)tcp_recv_buffer);
-                terminal_writestring("\n---------------------\n");
-            } else {
-                terminal_writestring("  No response received.\n");
+        ip |= val;
+        (void)a; (void)b; (void)c; (void)d;
+        terminal_printf("  PING %d.%d.%d.%d — 3 packets\n",
+            (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
+        extern int arp_resolve(uint32_t, uint8_t*);
+        extern void icmp_send_echo(uint32_t, uint8_t*);
+        extern volatile int icmp_got_reply;
+        extern volatile uint32_t icmp_reply_src;
+        uint8_t mac[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+        if (!arp_resolve(ip, mac)) {
+            terminal_printf("  ARP failed — host unreachable.\n");
+        } else {
+            int _replied = 0;
+            for (int _seq = 1; _seq <= 3; _seq++) {
+                icmp_got_reply = 0;
+                icmp_send_echo(ip, mac);
+                uint32_t _dl = pit_get_ticks() + 2000;
+                while (!icmp_got_reply && pit_get_ticks() < _dl) {}
+                if (icmp_got_reply) {
+                    terminal_printf("  Reply from %d.%d.%d.%d: seq=%d alive\n",
+                        (ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,_seq);
+                    _replied++;
+                } else {
+                    terminal_printf("  Request timeout for seq=%d\n", _seq);
+                }
             }
+            terminal_printf("  3 sent, %d received, %d%% loss\n", _replied, (3-_replied)*100/3);
         }
-    }
-    else {
+    } else if (strncmp(cmd, "arp", 3) == 0) {
+        terminal_writestring("  Sending ARP request for 10.0.2.2 (gateway)...\n");
+        extern void arp_send_request(uint32_t);
+        arp_send_request(0x0202000A); // 10.0.2.2
+        terminal_writestring("  ARP request sent. Check serial log for replies.\n");
+    } else if (strcmp(cmd, "ifconfig") == 0) {
+        extern uint8_t* rtl8139_get_mac(void);
+        uint8_t* mac = rtl8139_get_mac();
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+        terminal_writestring("\n  eth0    RTL8139 Network Interface\n");
+        terminal_setcolor(vga_entry_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
+        terminal_writestring("  ─────────────────────────────────────────\n");
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        terminal_printf("  IPv4:  10.0.2.15/24\n");
+        terminal_printf("  MAC:   %02x:%02x:%02x:%02x:%02x:%02x\n",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        terminal_printf("  GW:    10.0.2.2\n");
+        terminal_printf("  DNS:   8.8.8.8\n");
+        terminal_printf("  MTU:   1500 bytes\n");
+        terminal_putchar('\n');
+    } else if (strcmp(cmd, "dns") == 0) {
+        terminal_writestring("  Usage: nslookup <hostname>\n");
+    } else if (strcmp(cmd, "ext2 mount") == 0) {
+        extern void ext2_init(void);
+        extern int ext2_is_mounted(void);
+        ext2_init();
+        terminal_printf(ext2_is_mounted() ? "  EXT2 mounted at /mnt/ext2\n" : "  EXT2 not found.\n");
+    } else if (strcmp(cmd, "ext2 ls") == 0) {
+        extern int ext2_ls(char names[][13], int max);
+        char names[64][13];
+        int n = ext2_ls(names, 64);
+        if (n < 0) { terminal_printf("  EXT2 not mounted.\n"); }
+        else if (n == 0) { terminal_printf("  (empty)\n"); }
+        else {
+            terminal_printf("  EXT2 root directory (%d entries):\n", n);
+            for (int i = 0; i < n; i++) terminal_printf("    %s\n", names[i]);
+        }
+    } else if (strncmp(cmd, "ext2 read ", 10) == 0) {
+        extern int ext2_read_file(const char*, uint8_t*, uint32_t);
+        static uint8_t _e2buf[4096];
+        int r = ext2_read_file(cmd + 10, _e2buf, sizeof(_e2buf) - 1);
+        if (r < 0) terminal_printf("  File not found: %s\n", cmd + 10);
+        else { _e2buf[r] = '\0'; terminal_printf("%s\n", _e2buf); }
+    } else if (strncmp(cmd, "nvme read ", 10) == 0) {
+        extern int nvme_read_sector(uint64_t lba, void* buf);
+        static uint8_t _nvbuf[512];
+        uint64_t lba = (uint64_t)strtol(cmd + 10, NULL, 10);
+        if (nvme_read_sector(lba, _nvbuf)) {
+            terminal_printf("  NVMe LBA %llu:\n", lba);
+            for (int i = 0; i < 64; i++) {
+                if (i % 16 == 0) terminal_printf("  %03x: ", i);
+                terminal_printf("%02x ", _nvbuf[i]);
+                if (i % 16 == 15) terminal_putchar('\n');
+            }
+        } else { terminal_printf("  NVMe read failed.\n"); }
+    } else if (strcmp(cmd, "lsusb") == 0) {
+        extern void usb_list_devices(void);
+        usb_list_devices();
+    } else if (strcmp(cmd, "fat32 ls") == 0) {
+        extern int fat32_init(void);
+        extern int fat32_ls_dir(const char*, char[][13], int);
+        if (!fat32_init()) { terminal_printf("  FAT32: no volume found.\n"); }
+        else {
+            char _names[32][13];
+            int _n = fat32_ls_dir("/", _names, 32);
+            for (int _i = 0; _i < _n; _i++) terminal_printf("  %s\n", _names[_i]);
+            terminal_printf("  %d files.\n", _n);
+        }
+    } else if (strncmp(cmd, "fat32 read ", 11) == 0) {
+        extern int fat32_init(void);
+        extern int fat32_read_file(const char*, uint8_t*, uint32_t);
+        if (!fat32_init()) { terminal_printf("  FAT32: no volume found.\n"); }
+        else {
+            static uint8_t _fbuf[4096];
+            int _r = fat32_read_file(cmd + 11, _fbuf, sizeof(_fbuf) - 1);
+            if (_r < 0) terminal_printf("  File not found.\n");
+            else { _fbuf[_r] = '\0'; terminal_printf("%s\n", (char*)_fbuf); }
+        }
+    } else if (strcmp(cmd, "dhcp") == 0) {
+        extern int dhcp_discover(void);
+        extern uint32_t my_ip, gateway_ip, subnet_mask, dns_server_ip;
+        terminal_printf("  Sending DHCP DISCOVER...\n");
+        if (dhcp_discover()) {
+            uint8_t* _a = (uint8_t*)&my_ip;
+            uint8_t* _g = (uint8_t*)&gateway_ip;
+            uint8_t* _d = (uint8_t*)&dns_server_ip;
+            uint8_t* _m = (uint8_t*)&subnet_mask;
+            terminal_printf("  IP:      %d.%d.%d.%d\n", _a[0],_a[1],_a[2],_a[3]);
+            terminal_printf("  Mask:    %d.%d.%d.%d\n", _m[0],_m[1],_m[2],_m[3]);
+            terminal_printf("  Gateway: %d.%d.%d.%d\n", _g[0],_g[1],_g[2],_g[3]);
+            terminal_printf("  DNS:     %d.%d.%d.%d\n", _d[0],_d[1],_d[2],_d[3]);
+        } else {
+            terminal_printf("  DHCP failed — no server responded.\n");
+        }
+    } else if (strcmp(cmd, "nvme fat ls") == 0) {
+        /* mount FAT16 BPB from NVMe LBA 0 and list root directory */
+        extern int nvme_read_sector(uint64_t lba, void* buf);
+        static uint8_t _nvbpb[512];
+        if (!nvme_read_sector(0, _nvbpb)) {
+            terminal_printf("  NVMe read failed.\n");
+        } else {
+            /* Parse BPB manually — bytes per sector, sectors per cluster etc. */
+            uint16_t bytes_per_sec  = _nvbpb[11] | (_nvbpb[12] << 8);
+            uint8_t  sec_per_clust  = _nvbpb[13];
+            uint16_t rsvd_sectors   = _nvbpb[14] | (_nvbpb[15] << 8);
+            uint8_t  num_fats       = _nvbpb[16];
+            uint16_t root_entries   = _nvbpb[17] | (_nvbpb[18] << 8);
+            uint16_t secs_per_fat   = _nvbpb[22] | (_nvbpb[23] << 8);
+            (void)sec_per_clust; (void)secs_per_fat;
+            terminal_printf("  NVMe FAT16  bytes/sec=%u  rsvd=%u  FATs=%u  root=%u\n",
+                            bytes_per_sec, rsvd_sectors, num_fats, root_entries);
+            /* Root dir starts at LBA: rsvd + num_fats * secs_per_fat */
+            uint32_t root_lba = rsvd_sectors + num_fats * secs_per_fat;
+            uint32_t root_size = (root_entries * 32 + 511) / 512;
+            terminal_printf("  Root dir: LBA %u, %u sectors\n", root_lba, root_size);
+            static uint8_t _nvdir[512];
+            int _listed = 0;
+            for (uint32_t _sl = 0; _sl < root_size && _listed < 32; _sl++) {
+                if (!nvme_read_sector(root_lba + _sl, _nvdir)) break;
+                for (int _e = 0; _e < 512/32 && _listed < 32; _e++) {
+                    uint8_t* _de = _nvdir + _e * 32;
+                    if (_de[0] == 0x00) goto _done_nvme_ls;
+                    if (_de[0] == 0xE5 || _de[11] == 0x0F) continue; /* del / LFN */
+                    char _fn[13]; int _fi = 0;
+                    for (int _c = 0; _c < 8 && _de[_c] != ' '; _c++) _fn[_fi++] = _de[_c];
+                    if (_de[8] != ' ') { _fn[_fi++] = '.'; for (int _c = 8; _c < 11 && _de[_c] != ' '; _c++) _fn[_fi++] = _de[_c]; }
+                    _fn[_fi] = '\0';
+                    uint32_t _fsz = _de[28] | (_de[29]<<8) | (_de[30]<<16) | (_de[31]<<24);
+                    terminal_printf("  %s  (%u bytes)\n", _fn, _fsz);
+                    _listed++;
+                }
+            }
+            _done_nvme_ls:
+            terminal_printf("  %d entries.\n", _listed);
+        }
+    } else if (strncmp(cmd, "wav play ", 9) == 0) {
+        extern int wav_parse(const uint8_t*, uint32_t, void*);
+        extern int wav_play(const void*);
+        size_t _wsz = 0;
+        const uint8_t* _wd = (const uint8_t*)tar_get_file(cmd + 9, &_wsz);
+        if (!_wd) { terminal_printf("  File not found: %s\n", cmd + 9); }
+        else {
+            static uint8_t _winfo[64];
+            int r = wav_parse(_wd, (uint32_t)_wsz, _winfo);
+            if (r == 0) { wav_play(_winfo); terminal_printf("  Playing '%s'...\n", cmd + 9); }
+            else terminal_writestring("  WAV parse failed.\n");
+        }
+    } else if (strcmp(cmd, "wav stop") == 0) {
+        extern void sb16_stop(void);
+        sb16_stop();
+        terminal_writestring("  Audio stopped.\n");
+    } else if (strcmp(cmd, "mount") == 0) {
+        extern void vfs_print_mounts(void);
+        vfs_print_mounts();
+    } else if (strncmp(cmd, "vls", 3) == 0) {
+        extern int vfs_ls(const char*, char[][64], int);
+        const char* path = (cmd[3] == ' ') ? cmd + 4 : "/";
+        char names[32][64];
+        int n = vfs_ls(path, names, 32);
+        if (n < 0) terminal_printf("  vls: no mount for '%s'\n", path);
+        else { for (int i = 0; i < n; i++) terminal_printf("  %s\n", names[i]); terminal_printf("  %d entries.\n", n); }
+    } else if (strncmp(cmd, "fat32 write ", 12) == 0) {
+        extern int fat32_write_file(const char*, const uint8_t*, uint32_t);
+        const char* p = cmd + 12;
+        char fname[16] = {0}; int i = 0;
+        while (*p && *p != ' ' && i < 15) fname[i++] = *p++;
+        while (*p == ' ') p++;
+        int r = fat32_write_file(fname, (const uint8_t*)p, (uint32_t)strlen(p));
+        terminal_printf(r < 0 ? "  fat32 write failed.\n" : "  Wrote %d bytes to '%s'.\n", r, fname);
+    } else if (strncmp(cmd, "fat32 mkdir ", 12) == 0) {
+        extern int fat32_mkdir(const char*);
+        int r = fat32_mkdir(cmd + 12);
+        terminal_printf(r == 0 ? "  Created '%s'.\n" : "  mkdir failed.\n", cmd + 12);
+    } else if (strcmp(cmd, "ipcs") == 0) {
+        extern void ipc_print_all(void);
+        ipc_print_all();
+    } else if (strncmp(cmd, "usb read ", 9) == 0) {
+        extern int usb_msc_read_sector(int, uint32_t, void*);
+        uint32_t lba = 0; const char* p = cmd + 9;
+        while (*p >= '0' && *p <= '9') { lba = lba * 10 + (*p - '0'); p++; }
+        static uint8_t usb_buf[512];
+        if (usb_msc_read_sector(0, lba, usb_buf) == 0) {
+            for (int i = 0; i < 512; i++) { terminal_printf("%02x ", usb_buf[i]); if ((i+1)%16==0) terminal_printf("\n"); }
+        } else terminal_printf("  USB read failed.\n");
+    } else if (strncmp(cmd, "raw open ", 9) == 0) {
+        extern int raw_socket_open(int);
+        int proto = 0; const char* p = cmd + 9;
+        while (*p >= '0' && *p <= '9') { proto = proto * 10 + (*p - '0'); p++; }
+        int fd = raw_socket_open(proto);
+        terminal_printf(fd >= 0 ? "  Opened raw socket fd=%d proto=%d\n" : "  Failed to open raw socket\n", fd, proto);
+    } else if (strncmp(cmd, "raw close ", 10) == 0) {
+        extern void raw_socket_close(int);
+        int fd = 0; const char* p = cmd + 10;
+        while (*p >= '0' && *p <= '9') { fd = fd * 10 + (*p - '0'); p++; }
+        raw_socket_close(fd);
+        terminal_printf("  Closed raw socket fd=%d\n", fd);
+    } else {
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
         terminal_printf("  Command not found: %s\n", cmd);
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
@@ -460,6 +754,9 @@ static void execute(void) {
 done:
     buf_len = 0;
     print_prompt();
+    // Flush to framebuffer after each command
+    extern void wm_request_redraw(void);
+    wm_request_redraw();
 }
 
 /* ── Keypress handler ────────────────────────────────────────────────────── */
@@ -495,6 +792,9 @@ void shell_handle_keypress(char c) {
     } else if (c >= ' ' && c <= '~') {
         if (buf_len < BUF_SIZE - 1) { buf[buf_len++] = c; terminal_putchar(c); }
     }
+    // Always flush to framebuffer so characters appear immediately
+    extern void wm_request_redraw(void);
+    wm_request_redraw();
 }
 
 /* ── First-boot wizard ───────────────────────────────────────────────────── */
@@ -574,4 +874,6 @@ void shell_init(void) {
     // Skip the first-boot wizard since we are in the GUI now
     // and the wizard uses blocking polling which would freeze the compositor!
     print_prompt();
+    extern void wm_request_redraw(void);
+    wm_request_redraw();
 }

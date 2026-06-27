@@ -18,7 +18,8 @@ static uint32_t tar_address = 0;
 
 static uint32_t parse_octal(const char* ptr, int size) {
     uint32_t value = 0;
-    for (int i = 0; i < size && ptr[i] != '\0' && ptr[i] != ' '; i++) {
+    for (int i = 0; i < size && ptr[i] != '\0'; i++) {
+        if (ptr[i] == ' ') continue;
         if (ptr[i] >= '0' && ptr[i] <= '7') {
             value = (value * 8) + (ptr[i] - '0');
         }
@@ -51,8 +52,9 @@ void tar_ls(void) {
         // typeflag '0' or '\0' is a normal file
         // '5' is a directory
         if (header->typeflag == '0' || header->typeflag == '\0') {
-            terminal_writestring(header->name);
-            terminal_writestring("\n");
+            terminal_printf("[TAR] found: %s at %x, size %d\n", header->name, current_address, size);
+        } else {
+            terminal_printf("[TAR] skip: %s at %x, type %c\n", header->name, current_address, header->typeflag);
         }
         
         // Advance to the next header
@@ -111,8 +113,13 @@ void* tar_get_file(const char* filename, size_t* out_size) {
 
         uint32_t size = parse_octal(header->size, 11);
         
+        const char* header_name = header->name;
+        if (header_name[0] == '.' && header_name[1] == '/') header_name += 2;
+        const char* cmp_name = filename;
+        if (cmp_name[0] == '.' && cmp_name[1] == '/') cmp_name += 2;
+
         if ((header->typeflag == '0' || header->typeflag == '\0') && 
-            strcmp(header->name, filename) == 0) {
+            strcmp(header_name, cmp_name) == 0) {
             
             if (out_size) *out_size = size;
             return (void*)(current_address + 512);

@@ -8,6 +8,7 @@
 
 /* Initialise from a Multiboot2 mmap tag */
 void  pmm_init(uint32_t mmap_tag_addr, uint32_t entry_size, uint32_t total_bytes);
+void  pmm_mark_used(uint32_t start, uint32_t size);
 void* pmm_alloc_frame(void);
 void  pmm_free_frame(void* addr);
 uint32_t pmm_get_used_frames(void);

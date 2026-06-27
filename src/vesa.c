@@ -144,3 +144,16 @@ void vesa_scroll_by(uint32_t pixels) {
 void vesa_scroll(void) {
     vesa_scroll_by(16);   /* default: one 8×16 font row */
 }
+
+void vesa_blit_region(uint32_t* src, int x, int y, int w, int h) {
+    if (!src || w <= 0 || h <= 0) return;
+    for (int row = 0; row < h; row++) {
+        int dy = y + row;
+        if (dy < 0 || (uint32_t)dy >= vesa_height) continue;
+        for (int col = 0; col < w; col++) {
+            int dx = x + col;
+            if (dx < 0 || (uint32_t)dx >= vesa_width) continue;
+            vesa_putpixel((uint32_t)dx, (uint32_t)dy, src[row * w + col]);
+        }
+    }
+}

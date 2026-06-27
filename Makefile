@@ -12,12 +12,40 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/paint.c src/ata.c src/fs.c src/fat16.c src/explorer.c src/speaker.c \
          src/minesweeper.c src/settings.c src/elf.c src/pci.c src/rtl8139.c \
          src/ethernet.c src/arp.c src/ipv4.c src/icmp.c src/sb16.c src/uhci.c \
-         src/ttf.c src/vector.c src/music.c src/udp.c src/tcp.c src/browser.c
+         src/usb.c src/usb_hid.c src/pipe.c \
+         src/ttf.c src/vector.c src/music.c src/udp.c src/tcp.c src/browser.c \
+         src/acpi.c src/apic.c src/smp.c src/ahci.c src/nvme.c src/ext2.c src/dns.c src/widget.c \
+         src/imgview.c \
+         src/dhcp.c \
+         src/fat32.c \
+         src/signal.c \
+         src/png.c \
+         src/mixer.c \
+         src/xhci.c \
+         src/spreadsheet.c \
+         src/video_player.c \
+         src/pdf.c \
+         src/usb_msc.c \
+         src/raw_socket.c \
+         src/vfs.c \
+         src/ipc.c \
+         src/textedit.c \
+         src/swap.c \
+         src/ac97.c \
+         src/wav.c \
+         src/sdl_shim.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
 
 all: elsea.iso
+
+src/trampoline.h: src/trampoline.asm
+	nasm -f bin src/trampoline.asm -o src/trampoline.bin
+	xxd -i src/trampoline.bin > src/trampoline.h
+
+src/smp.o: src/smp.c src/trampoline.h
+	$(CC) $(CFLAGS) -c $< -o $@
 
 src/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -32,6 +60,13 @@ disk.img:
 	dd if=/dev/zero of=disk.img bs=512 count=65536
 	mkfs.fat -F 16 -n "ELSEAOS" disk.img
 
+ext2_disk.img:
+	dd if=/dev/zero of=ext2_disk.img bs=512 count=65536
+	mkfs.ext2 -F ext2_disk.img
+
+nvme_disk.img:
+	dd if=/dev/zero of=nvme_disk.img bs=512 count=16384
+
 # Dual BIOS + UEFI bootable ISO.
 # grub-mkrescue includes i386-pc (BIOS) + x86_64-efi (UEFI) when both
 # grub-efi-amd64-bin and grub-pc-bin packages are installed.
@@ -40,7 +75,16 @@ hello.elf: hello.c
 	$(CC) -m32 -ffreestanding -fno-pie -fno-pic -nostdlib -Wl,-Ttext=0x08048000 hello.c -o hello.elf
 	cp hello.elf initrd/hello.elf
 
-elsea.iso: elsea.bin disk.img hello.elf
+initrd/libc.so: src/libc/libc.c
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fPIC -shared src/libc/libc.c -o initrd/libc.so
+
+initrd/c4.elf: src/compiler/c4.c initrd/libc.so
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/compiler/c4.c initrd/libc.so -o initrd/c4.elf
+
+initrd/test_pipe.elf: src/test_pipe.c initrd/libc.so
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/test_pipe.c initrd/libc.so -o initrd/test_pipe.elf
+
+elsea.iso: elsea.bin disk.img hello.elf initrd/c4.elf initrd/test_pipe.elf
 	mkdir -p isodir/boot/grub
 	cp elsea.bin isodir/boot/elsea.bin
 	cp grub/grub.cfg isodir/boot/grub/grub.cfg
@@ -48,24 +92,26 @@ elsea.iso: elsea.bin disk.img hello.elf
 	grub-mkrescue -o elsea.iso isodir \
 	    --modules="normal part_gpt part_msdos fat iso9660 multiboot2 search" 2>&1
 
-run: elsea.iso disk.img
+run: elsea.iso disk.img ext2_disk.img nvme_disk.img
 	qemu-system-i386 -cdrom elsea.iso \
 	    -drive file=disk.img,format=raw,index=0,media=disk \
+	    -drive file=ext2_disk.img,format=raw,if=none,id=ahcidisk -device ahci,id=ahci -device ide-hd,drive=ahcidisk,bus=ahci.0 \
+	    -drive file=nvme_disk.img,format=raw,if=none,id=nvmedisk -device nvme,serial=deadbeef,drive=nvmedisk \
 	    -netdev user,id=n0 -device rtl8139,netdev=n0 \
 	    -audiodev pa,id=snd0 -device sb16,audiodev=snd0 \
-	    -boot d
+	    -boot d -smp 4
 
 run-uefi: elsea.iso disk.img
 	qemu-system-i386 -cdrom elsea.iso \
 	    -drive file=disk.img,format=raw,index=0,media=disk \
 	    -netdev user,id=n0 -device rtl8139,netdev=n0 \
 	    -audiodev pa,id=snd0 -device sb16,audiodev=snd0 \
-	    -bios /usr/share/ovmf/OVMF.fd -boot d 2>/dev/null || \
+	    -bios /usr/share/ovmf/OVMF.fd -boot d -smp 4 2>/dev/null || \
 	qemu-system-i386 -cdrom elsea.iso \
 	    -drive file=disk.img,format=raw,index=0,media=disk \
 	    -netdev user,id=n0 -device rtl8139,netdev=n0 \
 	    -audiodev pa,id=snd0 -device sb16,audiodev=snd0 \
-	    -boot d
+	    -boot d -smp 4
 
 debug: elsea.iso disk.img
 	qemu-system-i386 -cdrom elsea.iso \

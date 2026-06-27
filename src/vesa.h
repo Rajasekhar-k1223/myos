@@ -23,3 +23,4 @@ void vesa_scroll(void);
 void vesa_scroll_by(uint32_t pixels);  /* scroll up by N pixel rows */
 uint32_t vesa_get_fb_addr(void);
 uint32_t vesa_get_fb_size(void);
+void vesa_blit_region(uint32_t* src, int x, int y, int w, int h);

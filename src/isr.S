@@ -65,6 +65,8 @@ ISR_NOERRCODE 29
 ISR_ERRCODE   30  /* #SX Security Exception          */
 ISR_NOERRCODE 31
 
+IRQ 16, 48
+
 /* Hardware IRQs remapped to vectors 32-47 */
 IRQ  0, 32   /* PIT timer    */
 IRQ  1, 33   /* PS/2 keyboard */
@@ -109,7 +111,9 @@ isr_common_stub:
     mov %ax, %es
     mov %ax, %fs
     mov %ax, %gs
+    push %esp
     call isr_handler
+    add $4, %esp
     pop %eax
     mov %ax, %ds
     mov %ax, %es
@@ -129,7 +133,9 @@ irq_common_stub:
     mov %ax, %es
     mov %ax, %fs
     mov %ax, %gs
+    push %esp
     call irq_handler
+    add $4, %esp
     pop %eax
     mov %ax, %ds
     mov %ax, %es

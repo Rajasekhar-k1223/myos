@@ -1,43 +1,106 @@
 #include "udp.h"
 #include "ipv4.h"
+#include "arp.h"
 #include "net.h"
 #include "string.h"
 #include "kernel.h"
 
+// ─── Per-port handler table ───────────────────────────────────────────────────
+#define UDP_HANDLER_MAX 8
+
+typedef struct {
+    uint16_t      port;
+    udp_handler_t handler;
+    int           active;
+} udp_port_binding_t;
+
+static udp_port_binding_t udp_handlers[UDP_HANDLER_MAX];
+
+void udp_register_handler(uint16_t port, udp_handler_t handler) {
+    // Update existing binding first
+    for (int i = 0; i < UDP_HANDLER_MAX; i++) {
+        if (udp_handlers[i].active && udp_handlers[i].port == port) {
+            udp_handlers[i].handler = handler;
+            return;
+        }
+    }
+    // Find empty slot
+    for (int i = 0; i < UDP_HANDLER_MAX; i++) {
+        if (!udp_handlers[i].active) {
+            udp_handlers[i].port    = port;
+            udp_handlers[i].handler = handler;
+            udp_handlers[i].active  = 1;
+            return;
+        }
+    }
+    terminal_printf("[UDP] Warning: handler table full, could not register port %d\n", port);
+}
+
+void udp_unregister_handler(uint16_t port) {
+    for (int i = 0; i < UDP_HANDLER_MAX; i++) {
+        if (udp_handlers[i].active && udp_handlers[i].port == port) {
+            udp_handlers[i].active = 0;
+            return;
+        }
+    }
+}
+
+// ─── Receive ─────────────────────────────────────────────────────────────────
 void udp_receive_packet(uint8_t* payload, uint32_t length, uint32_t src_ip) {
     if (length < sizeof(udp_header_t)) return;
-    
+
     udp_header_t* udp = (udp_header_t*)payload;
     uint16_t src_port = ntohs(udp->src_port);
     uint16_t dst_port = ntohs(udp->dst_port);
-    uint16_t len = ntohs(udp->length);
-    
-    if (len > length) return;
-    
-    uint8_t* data = payload + sizeof(udp_header_t);
-    uint32_t data_len = len - sizeof(udp_header_t);
-    
-    terminal_printf("[UDP] Received packet from %d.%d.%d.%d:%d to port %d, len %d\n",
-                    (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF, (src_ip >> 8) & 0xFF, src_ip & 0xFF,
-                    src_port, dst_port, data_len);
+    uint16_t pkt_len  = ntohs(udp->length);
+
+    if (pkt_len > length) return;
+
+    uint8_t*  data     = payload + sizeof(udp_header_t);
+    uint32_t  data_len = pkt_len - sizeof(udp_header_t);
+
+    // Dispatch to registered handler based on the SOURCE port that we sent
+    // (DNS replies come from port 53 to our src port, so match on dst_port)
+    for (int i = 0; i < UDP_HANDLER_MAX; i++) {
+        if (udp_handlers[i].active && udp_handlers[i].port == dst_port) {
+            udp_handlers[i].handler(data, data_len);
+            return;
+        }
+    }
+
+    // No handler registered — log it (only if it's not DHCP broadcast noise)
+    if (dst_port != 68 && dst_port != 67) {
+        terminal_printf("[UDP] Unhandled packet from %d.%d.%d.%d:%d -> port %d, len=%d\n",
+            (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+            (src_ip >>  8) & 0xFF,  src_ip & 0xFF,
+            src_port, dst_port, data_len);
+    }
+    (void)src_port; // suppress unused warning
 }
 
-void udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port, uint8_t* payload, uint32_t payload_length) {
+// ─── Send ─────────────────────────────────────────────────────────────────────
+void udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
+              uint8_t* payload, uint32_t payload_length) {
     uint32_t total_length = sizeof(udp_header_t) + payload_length;
     uint8_t buffer[2048];
-    
+
     if (total_length > 2048) return;
-    
+
     udp_header_t* udp = (udp_header_t*)buffer;
     udp->src_port = htons(src_port);
     udp->dst_port = htons(dst_port);
-    udp->length = htons(total_length);
-    udp->checksum = 0; // Checksum is optional in UDP over IPv4
-    
+    udp->length   = htons((uint16_t)total_length);
+    udp->checksum = 0; // Checksum optional for UDP over IPv4
+
     memcpy(buffer + sizeof(udp_header_t), payload, payload_length);
-    
-    // Using broadcast MAC for simplicity without ARP cache
+
+    // Resolve destination MAC via ARP (route via gateway for off-subnet)
+    static const uint32_t MY_IP      = 0x0F02000A; // 10.0.2.15
+    static const uint32_t GATEWAY_IP = 0x0202000A; // 10.0.2.2
     uint8_t dst_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    
-    ipv4_send_packet(dst_mac, dst_ip, 17, buffer, total_length); // 17 is UDP
+    uint32_t nexthop = dst_ip;
+    if ((nexthop & 0x00FFFFFF) != (MY_IP & 0x00FFFFFF)) nexthop = GATEWAY_IP;
+    arp_resolve(nexthop, dst_mac);
+
+    ipv4_send_packet(dst_mac, dst_ip, 17, buffer, total_length); // 17 = UDP
 }

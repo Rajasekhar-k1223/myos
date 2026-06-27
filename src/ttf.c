@@ -17,6 +17,9 @@ static uint32_t cmap_offset = 0;
 static int16_t indexToLocFormat = 0;
 static uint16_t numGlyphs = 0;
 
+static uint32_t kern_offset = 0;
+static uint16_t units_per_em = 1000;
+
 static uint32_t get_table_offset(const char* tag) {
     uint16_t numTables = read16(ttf_base + 4);
     uint8_t* table_dir = ttf_base + 12;
@@ -28,6 +31,8 @@ static uint32_t get_table_offset(const char* tag) {
     }
     return 0;
 }
+
+int ttf_is_loaded(void) { return ttf_base != 0; }
 
 void ttf_init(uint8_t* font_data) {
     ttf_base = font_data;
@@ -46,9 +51,12 @@ void ttf_init(uint8_t* font_data) {
     }
 
     indexToLocFormat = read16s(ttf_base + head_offset + 50);
-    numGlyphs = read16(ttf_base + maxp_offset + 4);
-    
-    terminal_printf("[TTF] Initialized successfully. Num Glyphs: %d\n", numGlyphs);
+    numGlyphs        = read16(ttf_base + maxp_offset + 4);
+    units_per_em     = read16(ttf_base + head_offset + 18);
+    kern_offset      = get_table_offset("kern");
+
+    terminal_printf("[TTF] Initialized. Glyphs=%d UPM=%d kern=%s\n",
+                    numGlyphs, units_per_em, kern_offset ? "yes" : "no");
 }
 
 uint16_t ttf_get_glyph_index(uint16_t charcode) {
@@ -115,6 +123,9 @@ uint16_t ttf_get_glyph_index(uint16_t charcode) {
 #define FLAG_X_SAME   16
 #define FLAG_Y_SAME   32
 
+/* Recursion depth guard for compound glyphs — prevents infinite loops from malformed fonts */
+static int ttf_compound_depth = 0;
+
 void ttf_render_glyph(uint16_t glyph_index, float scale, float offset_x, float offset_y, uint32_t* buffer, int width, int height, uint32_t color) {
     if (!ttf_base || glyph_index >= numGlyphs) return;
     
@@ -133,7 +144,53 @@ void ttf_render_glyph(uint16_t glyph_index, float scale, float offset_x, float o
     
     uint8_t* glyph = ttf_base + glyf_offset + glyph_offset;
     int16_t numberOfContours = read16s(glyph);
-    if (numberOfContours < 0) return; // Compound glyphs not supported yet
+    if (numberOfContours < 0) {
+        /* Compound glyph — render each component recursively */
+        if (++ttf_compound_depth > 8) { ttf_compound_depth--; return; }
+#define CG_ARG_1_2_WORDS    0x0001
+#define CG_ARGS_ARE_XY      0x0002
+#define CG_MORE_COMPONENTS  0x0020
+#define CG_WE_HAVE_SCALE    0x0008
+#define CG_WE_HAVE_XY_SCALE 0x0040
+#define CG_WE_HAVE_2X2      0x0080
+        uint8_t* component = glyph + 10;
+        int more = 1;
+        while (more) {
+            uint16_t flags     = read16(component); component += 2;
+            uint16_t glyph_idx = read16(component); component += 2;
+            int16_t arg1, arg2;
+            if (flags & CG_ARG_1_2_WORDS) {
+                arg1 = read16s(component); component += 2;
+                arg2 = read16s(component); component += 2;
+            } else {
+                arg1 = (int8_t)*component++;
+                arg2 = (int8_t)*component++;
+            }
+            float xx = 1.0f, xy = 0.0f, yx = 0.0f, yy = 1.0f;
+            if (flags & CG_WE_HAVE_SCALE) {
+                xx = yy = (float)read16s(component) / 16384.0f; component += 2;
+            } else if (flags & CG_WE_HAVE_XY_SCALE) {
+                xx = (float)read16s(component) / 16384.0f; component += 2;
+                yy = (float)read16s(component) / 16384.0f; component += 2;
+            } else if (flags & CG_WE_HAVE_2X2) {
+                xx = (float)read16s(component) / 16384.0f; component += 2;
+                xy = (float)read16s(component) / 16384.0f; component += 2;
+                yx = (float)read16s(component) / 16384.0f; component += 2;
+                yy = (float)read16s(component) / 16384.0f; component += 2;
+            }
+            (void)xy; (void)yx;
+            float dx = (flags & CG_ARGS_ARE_XY) ? (float)arg1 * scale : 0.0f;
+            float dy = (flags & CG_ARGS_ARE_XY) ? (float)arg2 * scale : 0.0f;
+            if (flags & (CG_WE_HAVE_SCALE | CG_WE_HAVE_XY_SCALE | CG_WE_HAVE_2X2)) {
+                dx = dx * xx; dy = dy * yy;
+            }
+            ttf_render_glyph(glyph_idx, scale, offset_x + dx, offset_y - dy,
+                             buffer, width, height, color);
+            more = (flags & CG_MORE_COMPONENTS);
+        }
+        ttf_compound_depth--;
+        return;
+    }
     
     uint16_t* endPtsOfContours = (uint16_t*)(glyph + 10);
     uint16_t numPoints = read16((uint8_t*)&endPtsOfContours[numberOfContours - 1]) + 1;
@@ -235,14 +292,52 @@ void ttf_render_glyph(uint16_t glyph_index, float scale, float offset_x, float o
     vec_fill(buffer, width, height, color);
 }
 
-void ttf_draw_string(uint32_t* buffer, int width, int height, int x, int y, const char* str, int font_size, uint32_t color) {
-    float scale = (float)font_size / 1000.0f; // Hacky fixed scale
-    float cur_x = x;
-    for (int i = 0; str[i] != '\0'; i++) {
-        uint16_t gid = ttf_get_glyph_index(str[i]);
-        if (gid) {
-            ttf_render_glyph(gid, scale, cur_x, y, buffer, width, height, color);
+/* Binary search kern table (format 0) for pair (left, right). Returns kern value in pixels. */
+static int ttf_get_kern(uint16_t left, uint16_t right, int font_size) {
+    if (!kern_offset || !units_per_em) return 0;
+    uint8_t* kt = ttf_base + kern_offset;
+    /* kern table: version(2), nTables(2) */
+    uint16_t nTables = read16(kt + 2);
+    uint8_t* sub = kt + 4;
+    for (uint16_t t = 0; t < nTables; t++) {
+        uint16_t length   = read16(sub + 2);
+        uint16_t coverage = read16(sub + 4);
+        uint16_t format   = coverage >> 8;
+        if (format == 0 && (coverage & 1)) { /* horizontal kerning */
+            uint16_t nPairs = read16(sub + 6);
+            uint8_t* pairs  = sub + 14;
+            /* binary search */
+            int lo = 0, hi = (int)nPairs - 1;
+            uint32_t key = ((uint32_t)left << 16) | right;
+            while (lo <= hi) {
+                int mid = (lo + hi) / 2;
+                uint16_t kl = read16(pairs + mid * 6);
+                uint16_t kr = read16(pairs + mid * 6 + 2);
+                uint32_t k  = ((uint32_t)kl << 16) | kr;
+                if (k == key) {
+                    int16_t val = read16s(pairs + mid * 6 + 4);
+                    return (int)(val * font_size) / (int)units_per_em;
+                }
+                if (k < key) lo = mid + 1; else hi = mid - 1;
+            }
         }
-        cur_x += 1000.0f * scale; // Advance based on scale
+        sub += length;
+    }
+    return 0;
+}
+
+void ttf_draw_string(uint32_t* buffer, int width, int height, int x, int y, const char* str, int font_size, uint32_t color) {
+    float scale = (float)font_size / 1000.0f;
+    float cur_x = (float)x;
+    uint16_t prev_gid = 0;
+    for (int i = 0; str[i] != '\0'; i++) {
+        uint16_t gid = ttf_get_glyph_index((uint8_t)str[i]);
+        /* Apply kerning between consecutive glyphs */
+        if (kern_offset && prev_gid && gid)
+            cur_x += (float)ttf_get_kern(prev_gid, gid, font_size);
+        if (gid)
+            ttf_render_glyph(gid, scale, cur_x, (float)y, buffer, width, height, color);
+        cur_x += 1000.0f * scale;
+        prev_gid = gid;
     }
 }

@@ -31,6 +31,24 @@ static const char sc_ascii_shift[] = {
 static int shift_held = 0;
 static int ctrl_held = 0;
 
+void keyboard_handler_inject(char c) {
+    if (!c) return;
+    extern int snake_handle_input(char c);
+    extern int wm_handle_keypress(char c);
+    extern int wm_handle_shortcut(char c);
+    
+    if (ctrl_held) {
+        wm_handle_shortcut(c);
+    } else {
+        if (!snake_handle_input(c)) {
+            if (!wm_handle_keypress(c)) {
+                extern void shell_handle_keypress(char c);
+                shell_handle_keypress(c);
+            }
+        }
+    }
+}
+
 static void keyboard_callback(struct registers* regs) {
     (void)regs;
     uint8_t sc = inb(KBD_DATA);
@@ -70,21 +88,7 @@ static void keyboard_callback(struct registers* regs) {
 
     if (sc < sizeof(sc_ascii)) {
         char c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];
-        if (c) {
-            extern int snake_handle_input(char c);
-            extern int wm_handle_keypress(char c);
-            extern int wm_handle_shortcut(char c);
-            
-            if (ctrl_held) {
-                wm_handle_shortcut(c);
-            } else {
-                if (!snake_handle_input(c)) {
-                    if (!wm_handle_keypress(c)) {
-                        shell_handle_keypress(c);
-                    }
-                }
-            }
-        }
+        keyboard_handler_inject(c);
     }
 }
 
