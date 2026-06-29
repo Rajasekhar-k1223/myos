@@ -14,11 +14,13 @@ static uint32_t loca_offset = 0;
 static uint32_t glyf_offset = 0;
 static uint32_t cmap_offset = 0;
 
-static int16_t indexToLocFormat = 0;
+static int16_t  indexToLocFormat = 0;
 static uint16_t numGlyphs = 0;
 
 static uint32_t kern_offset = 0;
 static uint16_t units_per_em = 1000;
+
+uint16_t ttf_get_upm(void) { return units_per_em > 0 ? units_per_em : 1000; }
 
 static uint32_t get_table_offset(const char* tag) {
     uint16_t numTables = read16(ttf_base + 4);
@@ -327,17 +329,17 @@ static int ttf_get_kern(uint16_t left, uint16_t right, int font_size) {
 }
 
 void ttf_draw_string(uint32_t* buffer, int width, int height, int x, int y, const char* str, int font_size, uint32_t color) {
-    float scale = (float)font_size / 1000.0f;
+    float upm   = (float)(units_per_em > 0 ? units_per_em : 1000);
+    float scale = (float)font_size / upm;
     float cur_x = (float)x;
     uint16_t prev_gid = 0;
     for (int i = 0; str[i] != '\0'; i++) {
         uint16_t gid = ttf_get_glyph_index((uint8_t)str[i]);
-        /* Apply kerning between consecutive glyphs */
         if (kern_offset && prev_gid && gid)
             cur_x += (float)ttf_get_kern(prev_gid, gid, font_size);
         if (gid)
             ttf_render_glyph(gid, scale, cur_x, (float)y, buffer, width, height, color);
-        cur_x += 1000.0f * scale;
+        cur_x += upm * scale;   /* = font_size px per char — proportional to actual em */
         prev_gid = gid;
     }
 }
