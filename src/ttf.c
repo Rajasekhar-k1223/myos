@@ -206,7 +206,7 @@ void ttf_render_glyph(uint16_t glyph_index, float scale, float offset_x, float o
         flags[flag_idx++] = flag;
         if (flag & FLAG_REPEAT) {
             uint8_t repeat = *flags_ptr++;
-            for (int r = 0; r < repeat; r++) flags[flag_idx++] = flag;
+            for (int r = 0; r < repeat && flag_idx < numPoints; r++) flags[flag_idx++] = flag;
         }
     }
     

@@ -39,8 +39,14 @@ void pmm_init(uint32_t mmap_tag_addr, uint32_t entry_size, uint32_t total_bytes)
         offset += entry_size;
     }
 
-    /* protect first 2 MB (BIOS data, kernel, stack) */
-    for (uint32_t i = 0; i < 0x200000u / PMM_FRAME_SIZE; i++)
+    /* protect everything from frame 0 to end of kernel BSS
+     * (_kernel_end covers .text/.rodata/.data/.bss including cow_refs, bitmap, stack)
+     * always protect at least the first 2 MB for BIOS data areas */
+    extern char _kernel_end[];
+    uint32_t kend = ((uint32_t)(uintptr_t)_kernel_end + PMM_FRAME_SIZE - 1)
+                    & ~(PMM_FRAME_SIZE - 1);
+    if (kend < 0x200000u) kend = 0x200000u;
+    for (uint32_t i = 0; i < kend / PMM_FRAME_SIZE; i++)
         pmm_set(i);
 }
 

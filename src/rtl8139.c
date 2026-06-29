@@ -1,7 +1,7 @@
 #include "rtl8139.h"
 #include "pci.h"
 #include "kernel.h"
-#include "pmm.h"
+#include "kheap.h"
 #include "string.h"
 #include "idt.h"
 #include "ethernet.h"
@@ -55,14 +55,20 @@ void rtl8139_init(void) {
     terminal_printf("  [RTL8139] MAC Address: %x:%x:%x:%x:%x:%x\n",
         mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
         
-    // Allocate 8K + 16 bytes for RX buffer (we'll allocate 3 pages)
-    rx_buffer = (uint8_t*)pmm_alloc_frame();
-    pmm_alloc_frame(); // Allocate continuous physically
-    pmm_alloc_frame();
-    
-    // Allocate 4 pages for TX buffers
+    /* RX ring must be physically contiguous: 8K + 16 bytes header */
+    rx_buffer = (uint8_t*)kmalloc(8192 + 16);
+    if (!rx_buffer) {
+        terminal_printf("  [RTL8139] Failed to allocate RX buffer\n");
+        return;
+    }
+
+    /* TX buffers (4 × 4K) */
     for (int i = 0; i < 4; i++) {
-        tx_buffers[i] = (uint8_t*)pmm_alloc_frame();
+        tx_buffers[i] = (uint8_t*)kmalloc(4096);
+        if (!tx_buffers[i]) {
+            terminal_printf("  [RTL8139] Failed to allocate TX buffer %d\n", i);
+            return;
+        }
     }
     
     // Send the physical address of the RX buffer to the card
@@ -98,10 +104,12 @@ void rtl8139_handler(struct registers* regs) {
         uint16_t pkt_length = pkt[1];
         
         uint8_t* frame = (uint8_t*)(pkt + 2);
-        
+
+        if (pkt_length < 4) goto rtl_rx_advance;
         // Pass the raw frame to the Ethernet layer
         ethernet_receive_packet(frame, pkt_length - 4); // The length includes a 4 byte CRC at the end that we don't care about
         
+        rtl_rx_advance:
         current_rx_ptr = (current_rx_ptr + pkt_length + 4 + 3) & ~3; // Align to 4 bytes
         if (current_rx_ptr > 8192) {
             current_rx_ptr -= 8192;

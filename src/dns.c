@@ -146,16 +146,19 @@ static uint32_t dns_build_query(uint8_t* buf, uint32_t buf_size, const char* hos
     ptr += sizeof(dns_header_t);
 
     // Encode hostname as DNS labels: "google.com" -> "\x06google\x03com\x00"
+    uint8_t* buf_end = buf + buf_size - sizeof(dns_question_footer_t) - 1;
     const char* src = hostname;
     while (*src) {
-        uint8_t* len_byte = ptr++;         // reserve space for label length
+        if (ptr + 1 >= buf_end) return 0;  // not enough space for len byte + terminator
+        uint8_t* len_byte = ptr++;
         uint8_t  count    = 0;
         while (*src && *src != '.') {
+            if (ptr >= buf_end) return 0;
             *ptr++ = (uint8_t)*src++;
             count++;
         }
         *len_byte = count;
-        if (*src == '.') src++;            // skip the dot
+        if (*src == '.') src++;
     }
     *ptr++ = 0;   // null terminator
 
@@ -173,7 +176,6 @@ int dns_resolve(const char* hostname, uint32_t* ip_out) {
     if (!hostname || !ip_out) return 0;
 
     // Return immediately for raw IP addresses
-    uint32_t a = 0, b = 0, c = 0, d = 0;
     int dots = 0;
     const char* p = hostname;
     while (*p) {

@@ -27,7 +27,8 @@ static void load_shared_library(const char* libname, uint32_t load_base) {
                 memset(frame, 0, 4096);
                 paging_map_page(page, (uint32_t)frame, 7);
             }
-            if (filesz > 0) memcpy((void*)vaddr, lib_data + offset, filesz);
+            if (filesz > 0 && offset + filesz <= sz && filesz <= memsz)
+                memcpy((void*)vaddr, lib_data + offset, filesz);
         }
     }
 }
@@ -157,7 +158,14 @@ int elf_load_and_run(const char* filename) {
                 memset(frame, 0, 4096);
                 paging_map_page(page, (uint32_t)frame, 7);
             }
-            if (filesz > 0) memcpy((void*)vaddr, elf_data + offset, filesz);
+            if (filesz > 0) {
+                if (offset + filesz > file_size || filesz > memsz) {
+                    terminal_printf("  [ELF] Segment bounds invalid.\n");
+                    paging_switch_directory(old_dir);
+                    return -1;
+                }
+                memcpy((void*)vaddr, elf_data + offset, filesz);
+            }
         } else if (phdrs[i].p_type == 7) { /* PT_TLS */
             uint32_t tls_size  = phdrs[i].p_memsz;
             uint32_t tls_fsz   = phdrs[i].p_filesz;
@@ -168,7 +176,8 @@ int elf_load_and_run(const char* filename) {
                 memset(pf, 0, 4096);
                 paging_map_page(tls_vaddr + pg, (uint32_t)pf, 7);
             }
-            if (tls_fsz > 0) memcpy((void*)tls_vaddr, elf_data + tls_off, tls_fsz);
+            if (tls_fsz > 0 && tls_off + tls_fsz <= file_size && tls_fsz <= tls_size)
+                memcpy((void*)tls_vaddr, elf_data + tls_off, tls_fsz);
             extern task_t* task_current(void);
             task_t* cur = task_current();
             if (cur) cur->tls_base = tls_vaddr;
@@ -225,10 +234,11 @@ int task_exec(const char* filename, struct registers* regs) {
                 memset(frame, 0, 4096);
                 paging_map_page(page, (uint32_t)frame, 7);
             }
-            if (filesz > 0) memcpy((void*)vaddr, elf_data + offset, filesz);
+            if (filesz > 0 && offset + filesz <= file_size && filesz <= memsz)
+                memcpy((void*)vaddr, elf_data + offset, filesz);
         }
     }
-    
+
     uint32_t user_stack_top = 0xB0000000;
     for (uint32_t p = user_stack_top - 8192; p < user_stack_top; p += 4096) {
         void* frame = pmm_alloc_frame();

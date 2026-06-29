@@ -104,7 +104,10 @@ static void* find_rsdp(void) {
         mem += 16;
     }
     /* Also check EBDA */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
     uint16_t ebda_seg = *(uint16_t*)0x40E;
+#pragma GCC diagnostic pop
     uint8_t* ebda = (uint8_t*)((uint32_t)ebda_seg << 4);
     for (int i = 0; i < 1024; i += 16) {
         if (strncmp((char*)(ebda + i), "RSD PTR ", 8) == 0) {

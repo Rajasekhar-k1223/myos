@@ -1,0 +1,533 @@
+
+
+
+
+00000000 l    df *ABS*	00000000 
+00000000 l    df *ABS*	00000000 acpi.c
+00000000 l    df *ABS*	00000000 apic.c
+00000000 l    df *ABS*	00000000 arp.c
+00000000 l    df *ABS*	00000000 ata.c
+00000000 l    df *ABS*	00000000 bmp.c
+00000000 l    df *ABS*	00000000 boot.o
+00000000 l    df *ABS*	00000000 browser.c
+00000000 l    df *ABS*	00000000 calc.c
+00000000 l    df *ABS*	00000000 clock.c
+00000000 l    df *ABS*	00000000 elf.c
+00000000 l    df *ABS*	00000000 ethernet.c
+00000000 l    df *ABS*	00000000 explorer.c
+00000000 l    df *ABS*	00000000 fat16.c
+00000000 l    df *ABS*	00000000 fs.c
+00000000 l    df *ABS*	00000000 gdt.c
+00000000 l    df *ABS*	00000000 icmp.c
+00000000 l    df *ABS*	00000000 idt.c
+00000000 l    df *ABS*	00000000 ipv4.c
+00000000 l    df *ABS*	00000000 isr.o
+00000000 l    df *ABS*	00000000 kernel.c
+00000000 l    df *ABS*	00000000 keyboard.c
+00000000 l    df *ABS*	00000000 kheap.c
+00000000 l    df *ABS*	00000000 minesweeper.c
+00000000 l    df *ABS*	00000000 mouse.c
+00000000 l    df *ABS*	00000000 music.c
+00000000 l    df *ABS*	00000000 paging.c
+00000000 l    df *ABS*	00000000 paint.c
+00000000 l    df *ABS*	00000000 pci.c
+00000000 l    df *ABS*	00000000 pit.c
+00000000 l    df *ABS*	00000000 pmm.c
+00000000 l    df *ABS*	00000000 rtc.c
+00000000 l    df *ABS*	00000000 rtl8139.c
+00000000 l    df *ABS*	00000000 sb16.c
+00000000 l    df *ABS*	00000000 settings.c
+00000000 l    df *ABS*	00000000 shell.c
+00000000 l    df *ABS*	00000000 smp.c
+00000000 l    df *ABS*	00000000 snake.c
+00000000 l    df *ABS*	00000000 speaker.c
+00000000 l    df *ABS*	00000000 sprintf.c
+00000000 l    df *ABS*	00000000 string.c
+00000000 l    df *ABS*	00000000 syscall.c
+00000000 l    df *ABS*	00000000 tar.c
+00000000 l    df *ABS*	00000000 task.c
+00000000 l    df *ABS*	00000000 tcp.c
+00000000 l    df *ABS*	00000000 tss.c
+00000000 l    df *ABS*	00000000 ttf.c
+00000000 l    df *ABS*	00000000 udp.c
+00000000 l    df *ABS*	00000000 uhci.c
+00000000 l    df *ABS*	00000000 user.c
+00000000 l    df *ABS*	00000000 vector.c
+00000000 l    df *ABS*	00000000 vesa.c
+00000000 l    df *ABS*	00000000 wallpaper.c
+00000000 l    df *ABS*	00000000 wm.c
+00100000 l       .text	00000000 mb2_header_start
+00100030 l       .text	00000000 mb2_header_end
+00100030 l     F .text	000000ad putentryat
+001000e0 g     F .text	00000001 terminal_cursor_show
+001000f0 g     F .text	00000013 terminal_setpos
+00100110 g     F .text	00000021 terminal_getpos
+00100140 g     F .text	0000003d terminal_initialize
+00100180 g     F .text	00000034 terminal_clear
+001001c0 g     F .text	0000000a terminal_setcolor
+001001d0 g     F .text	00000156 terminal_putchar
+00100330 g     F .text	00000034 terminal_write
+00100370 g     F .text	0000002b terminal_writestring
+001003a0 l     F .text	0000007c boot_ok
+00100420 l     F .text	00000045 hline.constprop.0
+00100470 l     F .text	00000050 boot_section
+001004c0 g     F .text	00000062 terminal_writehex
+00100530 g     F .text	00000084 terminal_writedec
+001005c0 g     F .text	0000004e terminal_vprintf
+00100610 g     F .text	00000018 terminal_printf
+00100630 g     F .text	00000691 kernel_main
+00100cd0 g     F .text	0000005e gdt_set_entry_external
+00100d30 g     F .text	0000009e gdt_init
+00100dd0 g     F .text	00000649 idt_init
+00101420 g     F .text	00000011 register_interrupt_handler
+00101440 g     F .text	00000113 isr_handler
+00101560 g     F .text	00000036 irq_handler
+001015a0 l     F .text	000001a5 keyboard_callback
+00101750 g     F .text	00000013 keyboard_init
+00101770 l     F .text	00000067 utoa.part.0
+001017e0 g     F .text	00000035 memcpy
+00101820 g     F .text	0000005d memmove
+00101880 g     F .text	00000041 memset
+001018d0 g     F .text	00000045 memcmp
+00101920 g     F .text	00000021 strlen
+00101950 g     F .text	00000038 strcmp
+00101990 g     F .text	00000045 strncmp
+001019e0 g     F .text	00000063 strstr
+00101a50 g     F .text	00000022 strcpy
+00101a80 g     F .text	00000063 strncpy
+00101af0 g     F .text	0000003b strcat
+00101b30 g     F .text	0000004c strncat
+00101b80 g     F .text	00000146 strtol
+00101cd0 g     F .text	0000002c utoa
+00101d00 g     F .text	0000004c itoa
+00101d50 l     F .text	00000092 _uint_to_buf
+00101df0 g     F .text	00000606 vsnprintf
+00102400 g     F .text	0000001d snprintf
+00102420 g     F .text	0000001b sprintf
+00102440 g     F .text	0000011b pmm_init
+00102560 g     F .text	00000075 pmm_alloc_frame
+001025e0 g     F .text	0000002c pmm_free_frame
+00102610 g     F .text	00000006 pmm_get_used_frames
+00102620 g     F .text	00000006 pmm_get_max_frames
+00102630 g     F .text	0000006a paging_map_page
+001026a0 g     F .text	000000f7 paging_init
+001027a0 g     F .text	000000ec paging_clone_directory
+00102890 g     F .text	0000000d paging_switch_directory
+001028a0 g     F .text	0000004f kheap_init
+001028f0 g     F .text	00000074 kmalloc
+00102970 g     F .text	0000007c kfree
+001029f0 l     F .text	00000040 pit_callback
+00102a30 g     F .text	0000003a pit_init
+00102a70 g     F .text	0000000b pit_enable_scheduling
+00102a80 g     F .text	00000006 pit_get_ticks
+00102a90 g     F .text	0000000e pit_get_seconds
+00102aa0 g     F .text	000001ea rtc_read
+00102c90 g     F .text	00000176 rtc_datetime_str
+00102e10 l     F .text	00000085 shell_set_input
+00102ea0 l     F .text	00001322 execute
+001041d0 g     F .text	0000013d shell_handle_keypress
+00104310 g     F .text	00000067 shell_init
+00104380 g     F .text	0000000a tar_init
+00104390 g     F .text	0000009e tar_ls
+00104430 g     F .text	000000fe tar_cat
+00104530 g     F .text	00000102 tar_get_file
+00104640 g     F .text	000000c8 tar_get_file_at_index
+00104710 g     F .text	00000010 task_current
+00104720 g     F .text	00000029 task_count
+00104750 g     F .text	000000b7 tasking_init
+00104810 g     F .text	000000d5 task_create
+001048f0 g     F .text	000000fc task_create_user
+001049f0 g     F .text	000000cf task_fork
+00104ac0 g     F .text	00000042 task_tick
+00104b10 g     F .text	00000145 schedule
+00104c60 g     F .text	00000033 task_exit
+00104ca0 g     F .text	0000003a task_sleep
+00104ce0 g     F .text	00000088 tss_init
+00104d70 g     F .text	00000013 tss_set_stack
+00104d90 l     F .text	000002e0 syscall_handler
+00105070 g     F .text	00000016 syscall_init
+00105090 g     F .text	0000000c user_app_main
+001050a0 g     F .text	0000001b enter_user_mode
+001050c0 g     F .text	00000025 vesa_init
+001050f0 g     F .text	00000030 vesa_init_backbuffer
+00105120 g     F .text	0000000a vesa_set_double_buffer
+00105130 g     F .text	00000041 vesa_swap_buffers
+00105180 g     F .text	00000049 vesa_draw_desktop_bg
+001051d0 g     F .text	00000006 vesa_get_fb_addr
+001051e0 g     F .text	0000000d vesa_get_fb_size
+001051f0 g     F .text	00000060 vesa_putpixel
+00105250 g     F .text	00000060 vesa_getpixel
+001052b0 l     F .text	00000079 vesa_putpixel_alpha.part.0
+00105330 g     F .text	00000052 vesa_putpixel_alpha
+00105390 g     F .text	000000ed vesa_draw_rect
+00105480 l     F .text	00000133 vesa_scroll_by.part.0
+001055c0 g     F .text	000000e3 vesa_draw_rect_alpha
+001056b0 g     F .text	000000df vesa_clear
+00105790 g     F .text	00000019 vesa_scroll_by
+001057b0 g     F .text	00000019 vesa_scroll
+001057d0 g     F .text	0000014f bmp_draw_file
+00105920 g     F .text	000000f8 bmp_load_to_window
+00105a20 g     F .text	0000012e bmp_load_to_buffer
+00105b50 l     F .text	00000121 mouse_callback
+00105c80 g     F .text	00000006 mouse_get_x
+00105c90 g     F .text	00000006 mouse_get_y
+00105ca0 g     F .text	00000008 mouse_get_buttons
+00105cb0 g     F .text	00000150 mouse_init
+00105e00 l     F .text	000001d0 wm_redraw_term
+00105fd0 l     F .text	000000c8 wm_do_resize
+001060a0 l     F .text	00000095 wm_maximize_toggle
+00106140 l     F .text	000000aa wm_draw_string
+001061f0 l     F .text	0000006c draw_dock_icon.0.part.0
+00106260 l     F .text	00000655 wm_putchar.part.0
+001068c0 g     F .text	000000a8 wm_draw_desktop_text
+00106970 g     F .text	0000000b wm_request_redraw
+00106980 g     F .text	0000022e wm_create_window
+00106bb0 g     F .text	000002d8 wm_init
+00106e90 l     F .text	0000008b wm_notepad_open
+00106f20 g     F .text	000000c8 wm_draw_string_window
+00106ff0 g     F .text	000000b3 wm_set_wallpaper
+001070b0 g     F .text	00000742 wm_handle_shortcut
+00107800 g     F .text	00000021 wm_putchar
+00107830 g     F .text	00000036 wm_toast
+00107870 g     F .text	00002783 wm_process_events
+0010a000 g     F .text	00000121 wm_handle_keypress
+0010a130 l     F .text	0000009e draw_rect
+0010a1d0 g     F .text	000000cc snake_init
+0010a2a0 g     F .text	000002b5 snake_tick
+0010a560 g     F .text	000000c4 snake_handle_input
+0010a630 g     F .text	0000004f calc_init
+0010a680 g     F .text	00000305 calc_handle_input
+0010a990 l     F .text	000000d8 clock_draw_line
+0010aa70 l     F .text	00000330 clock_update.part.0
+0010ada0 g     F .text	00000019 clock_init
+0010adc0 g     F .text	0000000e clock_update
+0010add0 g     F .text	0000013c wallpaper_init
+0010af10 g     F .text	000000b5 wallpaper_handle_click
+0010afd0 g     F .text	000000f4 paint_init
+0010b0d0 g     F .text	000000f6 paint_handle_click
+0010b1d0 g     F .text	00000081 ata_init
+0010b260 g     F .text	00000098 ata_read_sector
+0010b300 g     F .text	000000b8 ata_write_sector
+0010b3c0 g     F .text	0000005e fs_format
+0010b420 g     F .text	00000043 fs_init
+0010b470 g     F .text	00000159 fs_write_file
+0010b5d0 g     F .text	000000a2 fs_read_file
+0010b680 g     F .text	00000053 fs_list_files
+0010b6e0 l     F .text	000000a8 to_83
+0010b790 l     F .text	0000007d fat_set
+0010b810 l     F .text	00000098 fat_alloc
+0010b8b0 g     F .text	000000c0 fat16_init
+0010b970 g     F .text	00000186 fat16_list_files
+0010bb00 g     F .text	00000225 fat16_read_file
+0010bd30 g     F .text	00000338 fat16_write_file
+0010c070 g     F .text	00000134 fat16_delete_file
+0010c1b0 l     F .text	000001c2 explorer_render.constprop.0
+0010c380 g     F .text	00000019 explorer_init
+0010c3a0 g     F .text	00000136 explorer_handle_click
+0010c4e0 g     F .text	00000033 speaker_play
+0010c520 g     F .text	00000008 speaker_stop
+0010c530 g     F .text	0000004c speaker_beep
+0010c580 l     F .text	00000407 minesweeper_render
+0010c990 l     F .text	00000152 reveal_cell
+0010caf0 g     F .text	0000018e minesweeper_init
+0010cc80 g     F .text	000000f3 minesweeper_handle_click
+0010cd80 g     F .text	000001b1 settings_init
+0010cf40 g     F .text	000000ba settings_handle_click
+0010d000 g     F .text	00000259 elf_load_and_run
+0010d260 g     F .text	000001cc task_exec
+0010d430 g     F .text	0000003a pci_read_config_32
+0010d470 g     F .text	0000003e pci_write_config_32
+0010d4b0 g     F .text	00000044 pci_read_config_16
+0010d500 g     F .text	00000073 pci_write_config_16
+0010d580 g     F .text	000000fd pci_get_device_by_vendor
+0010d680 g     F .text	0000005c pci_enable_bus_mastering
+0010d6e0 g     F .text	0000012a pci_get_device_by_class
+0010d810 g     F .text	00000081 rtl8139_handler
+0010d8a0 g     F .text	000001be rtl8139_init
+0010da60 g     F .text	00000064 rtl8139_send_packet
+0010dad0 g     F .text	00000006 rtl8139_get_mac
+0010dae0 g     F .text	0000004b ethernet_receive_packet
+0010db30 g     F .text	00000082 ethernet_send_packet
+0010dbc0 g     F .text	000000a3 arp_receive_packet
+0010dc70 g     F .text	000000ac ipv4_receive_packet
+0010dd20 g     F .text	000000f7 ipv4_send_packet
+0010de20 g     F .text	00000119 icmp_receive_packet
+0010df40 g     F .text	00000035 sb16_handler
+0010df80 g     F .text	00000158 sb16_init
+0010e0e0 g     F .text	00000042 sb16_set_sample_rate
+0010e130 g     F .text	0000006c sb16_start_playback
+0010e1a0 g     F .text	00000014 sb16_stop_playback
+0010e1c0 g     F .text	000000b9 uhci_check_ports
+0010e280 g     F .text	000001dc uhci_init
+0010e460 l     F .text	00000077 get_table_offset
+0010e4e0 g     F .text	000000e4 ttf_init
+0010e5d0 g     F .text	00000141 ttf_get_glyph_index
+0010e720 g     F .text	00000580 ttf_render_glyph
+0010eca0 g     F .text	000000a0 ttf_draw_string
+0010ed40 g     F .text	00000019 vec_init
+0010ed60 g     F .text	00000015 vec_move_to
+0010ed80 g     F .text	000000fa vec_line_to
+0010ee80 g     F .text	00000086 vec_quad_to
+0010ef10 g     F .text	00000326 vec_fill
+0010f240 l     F .text	000001a0 music_draw_ui
+0010f3e0 g     F .text	000000ea music_init
+0010f4d0 g     F .text	0000009b music_handle_click
+0010f570 g     F .text	000000b7 music_process_audio
+0010f630 g     F .text	00000072 udp_receive_packet
+0010f6b0 g     F .text	0000009a udp_send
+0010f750 l     F .text	00000137 tcp_send_packet
+0010f890 g     F .text	00000167 tcp_receive_packet
+0010fa00 g     F .text	000000a8 tcp_connect
+0010fab0 g     F .text	00000038 tcp_send_data
+0010faf0 l     F .text	00000368 parse_and_render_html
+0010fe60 g     F .text	0000013b browser_render
+0010ffa0 g     F .text	0000000e browser_init
+0010ffb0 g     F .text	0000021a browser_handle_click
+001101d0 g     F .text	000000a7 browser_handle_keypress
+00110280 g     F .text	00000137 acpi_init
+001103c0 g     F .text	0000000c apic_get_id
+001103d0 g     F .text	0000004c apic_init
+00110420 g     F .text	00000097 apic_send_init
+001104c0 g     F .text	0000005e apic_send_sipi
+00110520 g     F .text	0000004c ap_main
+00110570 g     F .text	00000104 smp_init
+00110674 g     F .text	00000010 _start
+00110684 g       .text	00000000 gdt_flush
+001106a1 g       .text	00000000 tss_flush
+001106a9 g       .text	00000000 isr0
+001106b2 g       .text	00000000 isr1
+001106bb g       .text	00000000 isr2
+001106c4 g       .text	00000000 isr3
+001106cd g       .text	00000000 isr4
+001106d6 g       .text	00000000 isr5
+001106df g       .text	00000000 isr6
+001106e8 g       .text	00000000 isr7
+001106f1 g       .text	00000000 isr8
+001106f8 g       .text	00000000 isr9
+00110701 g       .text	00000000 isr10
+00110708 g       .text	00000000 isr11
+0011070f g       .text	00000000 isr12
+00110716 g       .text	00000000 isr13
+0011071d g       .text	00000000 isr14
+00110724 g       .text	00000000 isr15
+0011072d g       .text	00000000 isr16
+00110736 g       .text	00000000 isr17
+0011073d g       .text	00000000 isr18
+00110746 g       .text	00000000 isr19
+0011074f g       .text	00000000 isr20
+00110758 g       .text	00000000 isr21
+00110761 g       .text	00000000 isr22
+0011076a g       .text	00000000 isr23
+00110773 g       .text	00000000 isr24
+0011077c g       .text	00000000 isr25
+00110785 g       .text	00000000 isr26
+0011078e g       .text	00000000 isr27
+00110797 g       .text	00000000 isr28
+0011079d g       .text	00000000 isr29
+001107a3 g       .text	00000000 isr30
+001107a7 g       .text	00000000 isr31
+001107ad g       .text	00000000 irq0
+001107b6 g       .text	00000000 irq1
+001107bf g       .text	00000000 irq2
+001107c5 g       .text	00000000 irq3
+001107cb g       .text	00000000 irq4
+001107d1 g       .text	00000000 irq5
+001107d7 g       .text	00000000 irq6
+001107dd g       .text	00000000 irq7
+001107e3 g       .text	00000000 irq8
+001107e9 g       .text	00000000 irq9
+001107ef g       .text	00000000 irq10
+001107f5 g       .text	00000000 irq11
+001107fb g       .text	00000000 irq12
+00110801 g       .text	00000000 irq13
+00110807 g       .text	00000000 irq14
+0011080d g       .text	00000000 irq15
+00110813 g       .text	00000000 isr128
+0011081c l       .text	00000000 isr_common_stub
+00110840 l       .text	00000000 irq_common_stub
+00110864 g       .text	00000000 context_switch
+001108a3 g       .text	00000000 jump_usermode
+001108b0 g       .text	00000000 clone_context
+001108e0 g     F .text	00000152 .hidden __divdi3
+00110a40 g     F .text	00000122 .hidden __udivdi3
+00111000 l     O .rodata	00000011 h.0
+00111020 l     O .rodata	00000040 vesa_palette
+00111060 l     O .rodata	00001000 font8x16
+00112060 l     O .rodata	00000050 exception_names
+001120c0 l     O .rodata	0000003a sc_ascii_shift
+00112100 l     O .rodata	0000003a sc_ascii
+0011213c l     O .rodata	00000011 digits.0
+00112220 l     O .rodata	00000010 CSWTCH.71
+00112240 l     O .rodata	000000a0 cmds.0
+0011257c l     O .rodata	0000001c ctx_items
+001125a0 l     O .rodata	00001000 font8x16
+001135a0 l     O .rodata	00000018 palette
+001135c0 l     O .rodata	00000020 theme_colors
+0011aa0c l       .eh_frame_hdr	00000000 __GNU_EH_FRAME_HDR
+0011c000 l     O .data	00000004 pit_hz
+0011c020 l     O .data	00000020 username
+0011c040 l     O .data	00000004 hist_pos
+0011c044 l     O .data	00000004 user_heap_vaddr.0
+0011c048 g     O .data	00000004 mouse_y
+0011c04c g     O .data	00000004 mouse_x
+0011c060 g     O .data	00000024 theme_ubuntu
+0011c0a0 g     O .data	00000024 theme_win95
+0011c0c4 l     O .data	00000004 drag_win_idx
+0011c0c8 l     O .data	00000004 redraw_needed
+0011c0cc l     O .data	00000004 snake_dir_x
+0011c0e0 g     O .data	000000f0 cos60
+0011c1e0 g     O .data	000000f0 sin60
+0011c2d0 l     O .data	00000002 ip_id
+0011c2d2 l     O .data	00000002 tcp_conn_src_port
+0011c2e0 l     O .data	00002000 html_content
+0011e2e0 l     O .data	00000004 url_len
+0011e300 l     O .data	00000100 url_bar
+0011e400 g     O .data	00000004 src_trampoline_bin_len
+0011e420 g     O .data	00000066 src_trampoline_bin
+0011f000 g     O .bss	00000004 shell_window
+0011f004 l     O .bss	00000001 term_color
+0011f008 l     O .bss	00000004 term_col
+0011f00c l     O .bss	00000004 term_row
+0011f020 l     O .bss	00000006 gp
+0011f040 l     O .bss	00000030 gdt
+0011f080 l     O .bss	00000400 interrupt_handlers
+0011f480 l     O .bss	00000006 idtp
+0011f4a0 l     O .bss	00000800 idt
+0011fca0 l     O .bss	00000004 ctrl_held
+0011fca4 l     O .bss	00000004 shift_held
+0011fcc0 l     O .bss	00000004 pmm_max_frames
+0011fcc4 l     O .bss	00000004 pmm_used_frames
+0011fce0 l     O .bss	00020000 pmm_bitmap
+0013fce0 g     O .bss	00000004 current_page_directory
+0013fce4 g     O .bss	00000004 kernel_page_directory
+0013fce8 l     O .bss	00000004 head
+0013fcec l     O .bss	00000004 sched_active
+0013fcf0 l     O .bss	00000004 pit_ticks
+0013fd00 l     O .bss	00002000 fat_rbuf.1
+00141d00 l     O .bss	00000004 hist_count
+00141d20 l     O .bss	00000800 history
+00142520 l     O .bss	00000004 buf_len
+00142540 l     O .bss	00000100 buf
+00142640 l     O .bss	00000004 tar_address
+00142660 g     O .bss	00010260 tasks
+001528c0 l     O .bss	00000004 next_id
+001528c4 l     O .bss	00000004 task_count_n
+001528c8 l     O .bss	00000004 current_tid
+001528e0 l     O .bss	00000068 tss_entry
+00152948 g     O .bss	00000004 vesa_height
+0015294c g     O .bss	00000004 vesa_width
+00152950 l     O .bss	00000004 double_buffer_enabled
+00152954 l     O .bss	00000004 backbuffer
+00152958 l     O .bss	00000004 fb_pitch
+0015295c l     O .bss	00000004 fb
+00152960 l     O .bss	00000001 mouse_buttons
+00152961 l     O .bss	00000003 mouse_byte
+00152964 l     O .bss	00000001 mouse_cycle
+00152980 g     O .bss	00000024 current_theme
+001529a4 l     O .bss	00000004 theme_idx.1
+001529a8 l     O .bss	00000001 last_btns.2
+001529c0 l     O .bss	00002000 load_buf.3
+001549c0 l     O .bss	00000004 toast_until
+001549e0 l     O .bss	00000050 toast_msg
+00154a40 l     O .bss	00000400 cursor_buf
+00154e40 l     O .bss	00001000 icon_pnt_buf
+00155e40 l     O .bss	00001000 icon_sett_buf
+00156e40 l     O .bss	00001000 icon_expl_buf
+00157e40 l     O .bss	00001000 icon_term_buf
+00158e40 l     O .bss	00000004 ctx_menu_y
+00158e44 l     O .bss	00000004 ctx_menu_x
+00158e48 l     O .bss	00000004 ctx_menu_open
+00158e4c l     O .bss	00000004 current_desktop
+00158e50 l     O .bss	00000004 clipboard_len
+00158e60 l     O .bss	00002000 clipboard_buf
+0015ae60 l     O .bss	00000004 start_btn_pressed
+0015ae64 l     O .bss	00000004 start_menu_open
+0015ae68 l     O .bss	00000004 last_clock_ticks
+0015ae6c l     O .bss	00000014 clock_str
+0015ae80 l     O .bss	00000004 snap_zone
+0015ae84 l     O .bss	00000004 scrollbar_track_h
+0015ae88 l     O .bss	00000004 scrollbar_track_y
+0015ae8c l     O .bss	00000004 scrollbar_win
+0015ae90 l     O .bss	00000004 resize_off_y
+0015ae94 l     O .bss	00000004 resize_off_x
+0015ae98 l     O .bss	00000004 resizing_window
+0015ae9c l     O .bss	00000004 drag_off_y
+0015aea0 l     O .bss	00000004 drag_off_x
+0015aea4 l     O .bss	00000004 focused_window
+0015aea8 l     O .bss	00000004 desktop_bg_buffer
+0015aeac l     O .bss	00000004 num_icons
+0015aec0 l     O .bss	00000a00 icons
+0015b8c0 l     O .bss	00000004 num_windows
+0015b8e0 l     O .bss	000006b8 windows
+0015bfa0 l     O .bss	00000004 last_tick_time
+0015bfa4 l     O .bss	00000004 game_over
+0015bfa8 l     O .bss	00000008 apple
+0015bfb0 l     O .bss	00000004 snake_dir_y
+0015bfb4 l     O .bss	00000004 snake_len
+0015bfc0 l     O .bss	00000320 snake
+0015c2e0 l     O .bss	00000004 snake_win
+0015c300 l     O .bss	00000004 calc_buf_idx
+0015c320 l     O .bss	00000080 calc_buffer
+0015c3a0 l     O .bss	00000004 current_color
+0015c3c0 l     O .bss	000001e8 sb
+0015c5c0 l     O .bss	00000200 dat_io
+0015c7c0 l     O .bss	00000200 dir_io
+0015c9c0 l     O .bss	00000200 fat_io
+0015cbc0 l     O .bss	00000004 fat16_ready
+0015cbc4 l     O .bss	00000004 root_secs
+0015cbc8 l     O .bss	00000004 data_start
+0015cbcc l     O .bss	00000004 root_start
+0015cbd0 l     O .bss	00000004 fat1_start
+0015cbe0 l     O .bss	0000003e bpb
+0015cc20 l     O .bss	00000004 state
+0015cc24 l     O .bss	00000004 my_win
+0015cc28 l     O .bss	00000004 my_win
+0015cc2c l     O .bss	00000001 tx_curr
+0015cc30 l     O .bss	00000010 tx_buffers
+0015cc40 l     O .bss	00000004 current_rx_ptr
+0015cc44 l     O .bss	00000004 rx_buffer
+0015cc48 l     O .bss	00000006 mac_addr
+0015cc4e l     O .bss	00000002 io_base
+0015cc50 g     O .bss	00000004 sb16_next_buffer
+0015cc54 g     O .bss	00000004 sb16_needs_data
+0015cc58 l     O .bss	00000004 current_half
+0015cc5c l     O .bss	00000004 audio_buffer
+0015cc60 l     O .bss	00000002 uhci_io_base
+0015cc64 l     O .bss	00000002 numGlyphs
+0015cc66 l     O .bss	00000002 indexToLocFormat
+0015cc68 l     O .bss	00000004 cmap_offset
+0015cc6c l     O .bss	00000004 glyf_offset
+0015cc70 l     O .bss	00000004 loca_offset
+0015cc74 l     O .bss	00000004 ttf_base
+0015cc80 l     O .bss	00000004 curr_y
+0015cc84 l     O .bss	00000004 curr_x
+0015cc88 l     O .bss	00000004 edge_count
+0015cca0 l     O .bss	00014000 edges
+00170ca0 l     O .bss	00000004 ui_counter.0
+00170ca4 l     O .bss	00000004 wav_size
+00170ca8 l     O .bss	00000004 wav_buffer
+00170cac l     O .bss	00000004 data_start
+00170cb0 l     O .bss	00000004 data_size
+00170cb4 l     O .bss	00000004 file_offset
+00170cb8 l     O .bss	00000004 is_playing
+00170cbc l     O .bss	00000004 music_win
+00170cc0 g     O .bss	00000004 tcp_recv_len
+00170ce0 g     O .bss	00001000 tcp_recv_buffer
+00171ce0 g     O .bss	00000004 tcp_has_data
+00171ce4 g     O .bss	00000004 tcp_is_connected
+00171ce8 l     O .bss	00000004 tcp_ack_num
+00171cec l     O .bss	00000004 tcp_seq_num
+00171cf0 l     O .bss	00000002 tcp_conn_dst_port
+00171cf4 l     O .bss	00000004 tcp_conn_dst_ip
+00171cf8 g     O .bss	00000004 browser_win
+00171cfc l     O .bss	00000004 is_loading
+00171d00 l     O .bss	00000004 is_focused
+00171d04 g     O .bss	00000001 bsp_apic_id
+00171d08 g     O .bss	00000004 num_cores
+00171d0c g     O .bss	00000010 apic_ids
+00171d1c g     O .bss	00000004 local_apic_base
+00171d20 g     O .bss	00000004 ap_count
+00171d30 l       .bss	00000000 stack_bottom
+00175d30 l       .bss	00000000 stack_top
+SYMBOL TABLE:
+elsea.bin:     file format elf32-i386

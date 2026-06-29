@@ -28,6 +28,11 @@ void vesa_init(uint32_t addr, uint32_t width, uint32_t height,
 void vesa_init_backbuffer(void) {
     if (vesa_width && vesa_height) {
         backbuffer = (uint32_t*)kmalloc(vesa_width * vesa_height * 4);
+        if (!backbuffer) {
+            extern void terminal_printf(const char*, ...);
+            terminal_printf("[VESA] FATAL: back-buffer alloc failed (%ux%u)\n",
+                            vesa_width, vesa_height);
+        }
     }
 }
 
@@ -36,8 +41,17 @@ void vesa_set_double_buffer(int enable) {
 }
 
 void vesa_swap_buffers(void) {
-    if (double_buffer_enabled && backbuffer && fb) {
+    if (!double_buffer_enabled || !backbuffer || !fb) return;
+    if (fb_pitch == vesa_width * 4) {
+        /* Tight pitch — single memcpy is safe and fast */
         memcpy(fb, backbuffer, vesa_width * vesa_height * 4);
+    } else {
+        /* Pitch != width*4 — copy row by row to respect hardware stride */
+        for (uint32_t row = 0; row < vesa_height; row++) {
+            memcpy((uint8_t*)fb    + row * fb_pitch,
+                   (uint8_t*)backbuffer + row * (vesa_width * 4),
+                   vesa_width * 4);
+        }
     }
 }
 

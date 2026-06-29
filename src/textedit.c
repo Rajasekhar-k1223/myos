@@ -136,19 +136,19 @@ static void te_draw_str(window_t* win, int px, int py, const char* s, uint32_t f
 }
 
 /* ── Draw number (decimal) ───────────────────────────────────────────────── */
-static void te_draw_num(window_t* win, int px, int py, int n, uint32_t fg) {
-    char tmp[12];
-    int len = 0;
-    if (n == 0) { tmp[len++] = '0'; }
-    else {
-        int v = n;
-        char rev[12]; int rlen = 0;
-        while (v > 0) { rev[rlen++] = '0' + (v % 10); v /= 10; }
-        for (int i = rlen - 1; i >= 0; i--) tmp[len++] = rev[i];
-    }
-    tmp[len] = '\0';
-    te_draw_str(win, px, py, tmp, fg);
-}
+// static void te_draw_num(window_t* win, int px, int py, int n, uint32_t fg) {
+//     char tmp[12];
+//     int len = 0;
+//     if (n == 0) { tmp[len++] = '0'; }
+//     else {
+//         int v = n;
+//         char rev[12]; int rlen = 0;
+//         while (v > 0) { rev[rlen++] = '0' + (v % 10); v /= 10; }
+//         for (int i = rlen - 1; i >= 0; i--) tmp[len++] = rev[i];
+//     }
+//     tmp[len] = '\0';
+//     te_draw_str(win, px, py, tmp, fg);
+// }
 
 /* ── Fill rectangle ──────────────────────────────────────────────────────── */
 static void te_fill_rect(window_t* win, int x, int y, int w, int h, uint32_t color) {

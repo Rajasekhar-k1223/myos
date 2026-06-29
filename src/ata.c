@@ -11,12 +11,18 @@
 #define ATA_STATUS      0x1F7
 #define ATA_COMMAND     0x1F7
 
-static void ata_wait_bsy() {
-    while (inb(ATA_STATUS) & 0x80);
+#define ATA_TIMEOUT 0x100000
+
+static int ata_wait_bsy(void) {
+    int t = ATA_TIMEOUT;
+    while ((inb(ATA_STATUS) & 0x80) && t > 0) t--;
+    return t > 0 ? 0 : -1;
 }
 
-static void ata_wait_drq() {
-    while (!(inb(ATA_STATUS) & 0x08));
+static int ata_wait_drq(void) {
+    int t = ATA_TIMEOUT;
+    while (!(inb(ATA_STATUS) & 0x08) && t > 0) t--;
+    return t > 0 ? 0 : -1;
 }
 
 int ata_init() {
@@ -41,42 +47,39 @@ int ata_init() {
     return 1;
 }
 
-void ata_read_sector(uint32_t lba, uint8_t* buffer) {
-    ata_wait_bsy();
+int ata_read_sector(uint32_t lba, uint8_t* buffer) {
+    if (ata_wait_bsy()) return -1;
     outb(ATA_DRV_HEAD, 0xE0 | ((lba >> 24) & 0x0F));
     outb(ATA_SECTOR_CNT, 1);
     outb(ATA_LBA_LO, (uint8_t) lba);
     outb(ATA_LBA_MID, (uint8_t)(lba >> 8));
     outb(ATA_LBA_HI, (uint8_t)(lba >> 16));
-    outb(ATA_COMMAND, 0x20); // Read with retry
-    
-    ata_wait_bsy();
-    ata_wait_drq();
-    
+    outb(ATA_COMMAND, 0x20);
+    if (ata_wait_bsy()) return -1;
+    if (ata_wait_drq()) return -1;
     for (int i = 0; i < 256; i++) {
         uint16_t word = inw(ATA_DATA);
         buffer[i * 2] = (uint8_t)word;
         buffer[i * 2 + 1] = (uint8_t)(word >> 8);
     }
+    return 0;
 }
 
-void ata_write_sector(uint32_t lba, uint8_t* buffer) {
-    ata_wait_bsy();
+int ata_write_sector(uint32_t lba, uint8_t* buffer) {
+    if (ata_wait_bsy()) return -1;
     outb(ATA_DRV_HEAD, 0xE0 | ((lba >> 24) & 0x0F));
     outb(ATA_SECTOR_CNT, 1);
     outb(ATA_LBA_LO, (uint8_t) lba);
     outb(ATA_LBA_MID, (uint8_t)(lba >> 8));
     outb(ATA_LBA_HI, (uint8_t)(lba >> 16));
-    outb(ATA_COMMAND, 0x30); // Write with retry
-    
-    ata_wait_bsy();
-    ata_wait_drq();
-    
+    outb(ATA_COMMAND, 0x30);
+    if (ata_wait_bsy()) return -1;
+    if (ata_wait_drq()) return -1;
     for (int i = 0; i < 256; i++) {
         uint16_t word = buffer[i * 2] | (buffer[i * 2 + 1] << 8);
         outw(ATA_DATA, word);
     }
-    
     outb(ATA_COMMAND, 0xE7); // Cache flush
-    ata_wait_bsy();
+    if (ata_wait_bsy()) return -1;
+    return 0;
 }

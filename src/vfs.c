@@ -210,12 +210,14 @@ int vfs_open(const char* path, int flags) {
         f->size = 0;
         break;
     case VFS_EXT2: {
-        static uint8_t ext2_tmp[65536];
-        int r = ext2_read_file(rel, ext2_tmp, sizeof(ext2_tmp));
-        if (r < 0) return -1;
+        uint8_t* ext2_tmp = (uint8_t*)kmalloc(65536);
+        if (!ext2_tmp) return -1;
+        int r = ext2_read_file(rel, ext2_tmp, 65536);
+        if (r < 0) { kfree(ext2_tmp); return -1; }
         void* ebuf = kmalloc((uint32_t)r);
-        if (!ebuf) return -1;
+        if (!ebuf) { kfree(ext2_tmp); return -1; }
         memcpy(ebuf, ext2_tmp, (uint32_t)r);
+        kfree(ext2_tmp);
         f->data = ebuf;
         f->size = (uint32_t)r;
         break;
@@ -243,11 +245,16 @@ int vfs_read(int fd, void* buf, uint32_t len) {
         return (int)len;
     }
     case VFS_FAT16: {
-        int r = fat16_read_file(f->path, (uint8_t*)buf, len);
-        if (r < 0) return -1;
-        if (f->pos > 0) return 0;
-        f->pos += (uint32_t)r;
-        return r;
+        /* Read into a temp buffer at offset f->pos, then advance position */
+        static uint8_t fat16_tmp[65536];
+        int total = fat16_read_file(f->path, fat16_tmp, sizeof(fat16_tmp));
+        if (total < 0) return -1;
+        if (f->pos >= (uint32_t)total) return 0;
+        uint32_t avail = (uint32_t)total - f->pos;
+        if (len > avail) len = avail;
+        memcpy(buf, fat16_tmp + f->pos, len);
+        f->pos += len;
+        return (int)len;
     }
     case VFS_EXT2: {
         if (!f->data) return -1;

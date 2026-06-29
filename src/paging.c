@@ -2,6 +2,8 @@
 #include "pmm.h"
 #include "string.h"
 #include "kernel.h"
+#include "apic.h"
+#include "idt.h"
 
 // 1024 entries * 4 bytes = 4096 bytes (1 frame)
 uint32_t* kernel_page_directory;
@@ -101,7 +103,21 @@ uint32_t* paging_clone_directory(void) {
             asm volatile("mov %%cr3, %%eax; mov %%eax, %%cr3" ::: "eax", "memory");
         }
     }
+    /* Shootdown TLB on all other SMP cores — they may have cached the
+     * now-read-only parent PTEs as writable, bypassing COW protection. */
+    apic_send_tlb_shootdown();
     return dir;
+}
+
+/* IPI handler for TLB shootdown (vector 0x3E) — flushes local TLB and ACKs. */
+static void tlb_shootdown_handler(struct registers* r) {
+    (void)r;
+    asm volatile("mov %%cr3, %%eax; mov %%eax, %%cr3" ::: "eax", "memory");
+    apic_eoi();
+}
+
+void paging_register_tlb_handler(void) {
+    register_interrupt_handler(0x3E, tlb_shootdown_handler);
 }
 
 void paging_switch_directory(uint32_t* dir) {
@@ -146,12 +162,18 @@ void paging_page_fault_handler(uint32_t fault_addr, uint32_t error_code) {
     if (!(pte & 1))           { task_exit(); return; }
 
     uint32_t phys = pte & ~0xFFF;
-    if (cow_refs[phys >> 12] > 1) {
+    uint32_t frame = phys >> 12;
+    if (frame >= 1024u * 1024u) { task_exit(); return; }
+
+    if (cow_refs[frame] > 1) {
         uint32_t new_phys = (uint32_t)pmm_alloc_frame();
+        if (!new_phys) { task_exit(); return; }
+        uint32_t new_frame = new_phys >> 12;
+        if (new_frame >= 1024u * 1024u) { task_exit(); return; }
         memcpy((void*)new_phys, (void*)phys, 4096);
         cow_dec(phys);
         pt[pte_idx] = new_phys | (pte & 0xFFF) | 2;
-        cow_refs[new_phys >> 12] = 1;
+        cow_refs[new_frame] = 1;
         asm volatile("invlpg (%0)" :: "r"(fault_addr) : "memory");
     } else {
         pt[pte_idx] = pte | 2;

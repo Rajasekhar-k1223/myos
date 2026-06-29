@@ -23,9 +23,15 @@ void ipv6_receive(const uint8_t* packet, uint32_t length) {
     
     if (length < sizeof(ipv6_header_t) + payload_len) return;
     
-    // Currently, we just drop it or print a debug message since upper layers (TCP/UDP) over IPv6 aren't wired up.
-    // In a full implementation, we would switch on next_header.
-    // For now, silently drop.
+    uint8_t* payload = (uint8_t*)(packet + sizeof(ipv6_header_t));
+    
+    if (hdr->next_header == 6) {
+        extern void tcp_receive_packet_v6(uint8_t*, uint32_t, const uint8_t*, const uint8_t*);
+        tcp_receive_packet_v6(payload, payload_len, hdr->src_ip, hdr->dst_ip);
+    } else if (hdr->next_header == 17) {
+        extern void udp_receive_packet_v6(uint8_t*, uint32_t, const uint8_t*, const uint8_t*);
+        udp_receive_packet_v6(payload, payload_len, hdr->src_ip, hdr->dst_ip);
+    }
 }
 
 int ipv6_send(const uint8_t* dst_ip, uint8_t next_header, const uint8_t* payload, uint32_t payload_len) {

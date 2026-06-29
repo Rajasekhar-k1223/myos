@@ -150,7 +150,7 @@ int snprintf(char* buf, size_t size, const char* fmt, ...) {
 int sprintf(char* buf, const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    int r = vsnprintf(buf, (size_t)-1, fmt, ap);
+    int r = vsnprintf(buf, 4096, fmt, ap);
     va_end(ap);
     return r;
 }

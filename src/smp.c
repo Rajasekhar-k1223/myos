@@ -2,10 +2,12 @@
 #include "acpi.h"
 #include "apic.h"
 #include "kernel.h"
+#include "pmm.h"
 #include "string.h"
 #include "paging.h"
 #include "idt.h"
 #include "pit.h"
+#include "pmm.h"
 
 #include "trampoline.h" // Generated from trampoline.asm
 #include "task.h"

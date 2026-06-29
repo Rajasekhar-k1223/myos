@@ -47,11 +47,9 @@ void usb_hid_poll(void) {
             }
             if (already) continue;
 
-            /* Translate keycode to ASCII */
-            if (kc < (int)(sizeof(hid_keycode_ascii))) {
-                char c = hid_keycode_ascii[kc];
-                if (c) terminal_putchar(c);
-            }
+            /* Translate keycode to ASCII (kc is uint8_t, always < 256) */
+            char c = hid_keycode_ascii[kc];
+            if (c) terminal_putchar(c);
         }
 
         memcpy(prev_buf, hid_buf, sizeof(hid_buf));

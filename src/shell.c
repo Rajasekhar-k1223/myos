@@ -4,6 +4,8 @@
 #include "pmm.h"
 #include "pit.h"
 #include "rtc.h"
+#include "user.h"
+#include "installer.h"
 #include "tar.h"
 #include "task.h"
 #include "io.h"
@@ -85,6 +87,7 @@ static void cmd_help(void) {
         {"sleep",    "sleep N milliseconds  (sleep 500)"},
         {"reboot",   "restart the machine"},
         {"halt",     "power off / halt CPU"},
+        {"install",  "run the graphical OS installer"},
     };
     for (size_t i = 0; i < sizeof(cmds)/sizeof(cmds[0]); i++) {
         terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
@@ -285,6 +288,11 @@ static void cmd_halt(void) {
     for (;;) __asm__ volatile("hlt");
 }
 
+static void cmd_install(void) {
+    terminal_writestring("  Launching Graphic Installer...\n");
+    installer_run();
+}
+
 /* ── Execute ─────────────────────────────────────────────────────────────── */
 static void execute(void) {
     terminal_putchar('\n');
@@ -318,6 +326,7 @@ static void execute(void) {
     }
     else if (strcmp(cmd, "reboot")== 0) cmd_reboot();
     else if (strcmp(cmd, "halt")  == 0) cmd_halt();
+    else if (strcmp(cmd, "install")== 0) cmd_install();
     else if (strncmp(cmd, "echo ",   5) == 0) { terminal_writestring(cmd + 5); terminal_putchar('\n'); }
     else if (strncmp(cmd, "cat ",    4) == 0) tar_cat(cmd + 4);
     else if (strncmp(cmd, "calc ",   5) == 0) cmd_calc(cmd + 5);
@@ -450,7 +459,7 @@ static void execute(void) {
             (dest_ip >> 24)&0xFF, (dest_ip >> 16)&0xFF,
             (dest_ip >>  8)&0xFF,  dest_ip & 0xFF);
 
-        if (!tcp_connect(dest_ip, 80)) goto done;
+        if (tcp_connect(dest_ip, 80) < 0) goto done;
 
         // Build minimal HTTP/1.0 request
         char req[256];
@@ -726,11 +735,11 @@ static void execute(void) {
         extern void ipc_print_all(void);
         ipc_print_all();
     } else if (strncmp(cmd, "usb read ", 9) == 0) {
-        extern int usb_msc_read_sector(int, uint32_t, void*);
+        extern int usb_msc_read_sector(uint32_t, void*);
         uint32_t lba = 0; const char* p = cmd + 9;
         while (*p >= '0' && *p <= '9') { lba = lba * 10 + (*p - '0'); p++; }
         static uint8_t usb_buf[512];
-        if (usb_msc_read_sector(0, lba, usb_buf) == 0) {
+        if (usb_msc_read_sector(lba, usb_buf) == 0) {
             for (int i = 0; i < 512; i++) { terminal_printf("%02x ", usb_buf[i]); if ((i+1)%16==0) terminal_printf("\n"); }
         } else terminal_printf("  USB read failed.\n");
     } else if (strncmp(cmd, "raw open ", 9) == 0) {

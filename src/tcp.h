@@ -33,6 +33,7 @@ typedef struct {
 
 /* ── Packet receive (called from ipv4.c) ────────────────────────────────── */
 void tcp_receive_packet(uint8_t* payload, uint32_t length, uint32_t src_ip);
+void tcp_receive_packet_v6(uint8_t* payload, uint32_t length, const uint8_t* src_ip, const uint8_t* dst_ip);
 
 /* ── Multi-connection API ─────────────────────────────────────────────────
  * tcp_connect  — open a connection; returns conn_id (0-7) or -1 on failure.
@@ -43,6 +44,7 @@ void tcp_receive_packet(uint8_t* payload, uint32_t length, uint32_t src_ip);
  * tcp_close    — send FIN and free the slot.
  * ─────────────────────────────────────────────────────────────────────── */
 int  tcp_connect(uint32_t dst_ip, uint16_t dst_port);
+int  tcp_connect_v6(const uint8_t* dst_ip, uint16_t dst_port);
 int  tcp_send(int conn_id, const uint8_t* data, uint32_t len);
 int  tcp_recv(int conn_id, uint8_t* buf, uint32_t max_len, uint32_t timeout_ms);
 void tcp_close(int conn_id);

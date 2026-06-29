@@ -85,8 +85,8 @@ static void syscall_handler(struct registers* regs) {
             uint32_t size = regs->ebx;
             if (size == 0) { regs->eax = 0; break; }
 
-            static uint32_t user_heap_vaddr = 0x40000000;
-            uint32_t ret   = user_heap_vaddr;
+            task_t* cur_mmap = task_current();
+            uint32_t ret   = cur_mmap->mmap_next;
             uint32_t pages = (size + 4095) / 4096;
 
             terminal_printf("[mmap] size=%u pages=%u vaddr=0x%x\n", size, pages, ret);
@@ -99,8 +99,8 @@ static void syscall_handler(struct registers* regs) {
                     goto mmap_done;
                 }
                 memset(frame, 0, 4096);
-                paging_map_page(user_heap_vaddr, (uint32_t)frame, 7); // user,rw,present
-                user_heap_vaddr += 4096;
+                paging_map_page(cur_mmap->mmap_next, (uint32_t)frame, 7);
+                cur_mmap->mmap_next += 4096;
             }
             regs->eax = ret;
             mmap_done:;
@@ -197,17 +197,16 @@ static void syscall_handler(struct registers* regs) {
         }
         case 13: { // sys_sbrk(increment)
             int inc = (int)regs->ebx;
-            static uint32_t current_brk = 0x50000000;
+            task_t* cur_brk = task_current();
             if (inc == 0) {
-                regs->eax = current_brk;
+                regs->eax = cur_brk->brk;
             } else {
-                uint32_t old_brk = current_brk;
-                uint32_t new_brk = current_brk + inc;
-                
-                // If expanding, map new pages
+                uint32_t old_brk = cur_brk->brk;
+                uint32_t new_brk = cur_brk->brk + (uint32_t)inc;
+
                 if (inc > 0) {
                     uint32_t start_page = (old_brk + 0xFFF) & ~0xFFF;
-                    uint32_t end_page = (new_brk + 0xFFF) & ~0xFFF;
+                    uint32_t end_page   = (new_brk + 0xFFF) & ~0xFFF;
                     for (uint32_t p = start_page; p < end_page; p += 4096) {
                         void* frame = pmm_alloc_frame();
                         if (frame) {
@@ -216,7 +215,7 @@ static void syscall_handler(struct registers* regs) {
                         }
                     }
                 }
-                current_brk = new_brk;
+                cur_brk->brk = new_brk;
                 regs->eax = old_brk;
             }
             break;
@@ -261,6 +260,7 @@ static void syscall_handler(struct registers* regs) {
             
             pipe_t* p = (pipe_t*)pmm_alloc_frame();
             if (!p) { regs->eax = -1; break; }
+            memset(p, 0, 4096);
             pipe_create(p);
             
             open_files[fd1].used = 1; open_files[fd1].is_pipe = 1;

@@ -38,7 +38,9 @@ static const uint32_t MY_IP = 0x0F02000A; /* 10.0.2.15 */
 typedef struct {
     int      used;
     int      state;
+    int      is_ipv6;
     uint32_t remote_ip;
+    uint8_t  remote_ipv6[16];
     uint16_t remote_port;
     uint16_t local_port;
     uint32_t seq_num;
@@ -83,12 +85,42 @@ static uint16_t tcp_checksum(tcp_header_t* tcp, uint32_t tcp_len,
     return (uint16_t)~sum;
 }
 
+#pragma pack(push, 1)
+typedef struct {
+    uint8_t  src_ip[16];
+    uint8_t  dst_ip[16];
+    uint32_t tcp_length;
+    uint8_t  zeros[3];
+    uint8_t  next_header;
+} tcp_ipv6_pseudo_header_t;
+#pragma pack(pop)
+
+static uint16_t tcp_checksum_v6(tcp_header_t* tcp, uint32_t tcp_len, const uint8_t* src_ip, const uint8_t* dst_ip) {
+    tcp_ipv6_pseudo_header_t ph;
+    memcpy(ph.src_ip, src_ip, 16);
+    memcpy(ph.dst_ip, dst_ip, 16);
+    ph.tcp_length = htonl(tcp_len);
+    ph.zeros[0] = ph.zeros[1] = ph.zeros[2] = 0;
+    ph.next_header = 6;
+
+    uint32_t sum = 0;
+    uint16_t* ptr = (uint16_t*)&ph;
+    for (int i = 0; i < (int)(sizeof(tcp_ipv6_pseudo_header_t) / 2); i++) sum += ptr[i];
+
+    ptr = (uint16_t*)tcp;
+    for (uint32_t i = 0; i < tcp_len / 2; i++) sum += ptr[i];
+    if (tcp_len & 1) sum += ((uint8_t*)tcp)[tcp_len - 1];
+
+    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
 /* ── Low-level send ──────────────────────────────────────────────────────── */
-static void conn_send_packet(tcp_conn_t* c, uint8_t flags,
-                              const uint8_t* payload, uint32_t payload_len) {
+static int conn_send_packet(tcp_conn_t* c, uint8_t flags,
+                             const uint8_t* payload, uint32_t payload_len) {
     uint8_t buffer[2048];
     uint32_t tcp_len = sizeof(tcp_header_t) + payload_len;
-    if (tcp_len > sizeof(buffer)) return;
+    if (tcp_len > sizeof(buffer)) return 0;
 
     tcp_header_t* tcp = (tcp_header_t*)buffer;
     tcp->src_port       = htons(c->local_port);
@@ -98,17 +130,22 @@ static void conn_send_packet(tcp_conn_t* c, uint8_t flags,
     tcp->reserved_offset = (uint8_t)((sizeof(tcp_header_t) / 4) << 4);
     tcp->flags          = flags;
     tcp->window_size    = htons(8192);
-    tcp->checksum       = 0;
     tcp->urgent_ptr     = 0;
+    tcp->checksum       = 0;
 
-    if (payload_len > 0 && payload) {
-        memcpy(buffer + sizeof(tcp_header_t), payload, payload_len);
+    if (c->is_ipv6) {
+        extern uint8_t my_ipv6_addr[16];
+        tcp->checksum = tcp_checksum_v6(tcp, tcp_len, my_ipv6_addr, c->remote_ipv6);
+        if (payload && payload_len > 0) memcpy(buffer + sizeof(tcp_header_t), payload, payload_len);
+        extern int ipv6_send(const uint8_t*, uint8_t, const uint8_t*, uint32_t);
+        ipv6_send(c->remote_ipv6, 6, buffer, tcp_len);
+    } else {
+        tcp->checksum = tcp_checksum(tcp, tcp_len, MY_IP, c->remote_ip);
+        if (payload && payload_len > 0) memcpy(buffer + sizeof(tcp_header_t), payload, payload_len);
+        uint8_t dst_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+        ipv4_send_packet(dst_mac, c->remote_ip, 6, buffer, tcp_len);
     }
-
-    tcp->checksum = tcp_checksum(tcp, tcp_len, MY_IP, c->remote_ip);
-
-    uint8_t dst_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    ipv4_send_packet(dst_mac, c->remote_ip, 6, buffer, tcp_len);
+    return 1;
 }
 
 /* ── Update legacy globals from connection 0 ─────────────────────────────── */
@@ -140,6 +177,71 @@ static void sync_legacy(void) {
 }
 
 /* ── Receive packet dispatcher ───────────────────────────────────────────── */
+void tcp_receive_packet_v6(uint8_t* payload, uint32_t length, const uint8_t* src_ip, const uint8_t* dst_ip) {
+    if (length < sizeof(tcp_header_t)) return;
+    (void)dst_ip;
+
+    tcp_header_t* tcp = (tcp_header_t*)payload;
+    uint16_t dst_port = ntohs(tcp->dst_port);
+    uint16_t src_port = ntohs(tcp->src_port);
+
+    tcp_conn_t* c = NULL;
+    for (int i = 0; i < TCP_MAX_CONNS; i++) {
+        if (!conns[i].used || !conns[i].is_ipv6) continue;
+        if (memcmp(conns[i].remote_ipv6, src_ip, 16) == 0 &&
+            conns[i].remote_port == src_port &&
+            conns[i].local_port  == dst_port) {
+            c = &conns[i];
+            break;
+        }
+    }
+    if (!c) return;
+
+    uint8_t header_len  = (tcp->reserved_offset >> 4) * 4;
+    uint32_t payload_len = (length > header_len) ? length - header_len : 0;
+
+    uint32_t seq = ntohl(tcp->seq);
+    uint32_t ack = ntohl(tcp->ack);
+
+    if (tcp->flags & TCP_RST) {
+        c->state = STATE_CLOSED;
+        return;
+    }
+
+    if (c->state == STATE_SYN_SENT) {
+        if ((tcp->flags & TCP_SYN) && (tcp->flags & TCP_ACK)) {
+            c->seq_num = ack;
+            c->ack_num = seq + 1;
+            c->state = STATE_ESTABLISHED;
+            conn_send_packet(c, TCP_ACK, NULL, 0);
+        }
+        return;
+    }
+
+    if (c->state == STATE_ESTABLISHED) {
+        if (payload_len > 0) {
+            uint8_t* data = payload + header_len;
+            for (uint32_t i = 0; i < payload_len; i++) {
+                uint32_t next_head = (c->rx_head + 1) % TCP_RX_BUF_SZ;
+                if (next_head != c->rx_tail) {
+                    c->rx_buf[c->rx_head] = data[i];
+                    c->rx_head = next_head;
+                }
+            }
+            c->has_data = 1;
+            c->ack_num = seq + payload_len;
+            conn_send_packet(c, TCP_ACK, NULL, 0);
+        }
+        if (tcp->flags & TCP_FIN) {
+            c->ack_num = seq + 1;
+            conn_send_packet(c, TCP_ACK | TCP_FIN, NULL, 0);
+            c->state = STATE_CLOSED;
+        }
+    }
+    
+    if (c == &conns[0]) sync_legacy();
+}
+
 void tcp_receive_packet(uint8_t* payload, uint32_t length, uint32_t src_ip) {
     if (length < sizeof(tcp_header_t)) return;
 
@@ -205,6 +307,46 @@ void tcp_receive_packet(uint8_t* payload, uint32_t length, uint32_t src_ip) {
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
 
+int tcp_connect_v6(const uint8_t* dst_ip, uint16_t dst_port) {
+    int id = -1;
+    for (int i = 0; i < TCP_MAX_CONNS; i++) {
+        if (!conns[i].used) {
+            id = i;
+            break;
+        }
+    }
+    if (id == -1) return -1;
+
+    tcp_conn_t* c = &conns[id];
+    memset(c, 0, sizeof(tcp_conn_t));
+    c->used        = 1;
+    c->is_ipv6     = 1;
+    memcpy(c->remote_ipv6, dst_ip, 16);
+    c->remote_port = dst_port;
+    c->local_port  = next_local_port++;
+    c->seq_num     = 0x12345678 + id;
+    c->ack_num     = 0;
+    c->state       = STATE_SYN_SENT;
+    c->rx_head     = 0;
+    c->rx_tail     = 0;
+    c->has_data    = 0;
+
+    conn_send_packet(c, TCP_SYN, NULL, 0);
+
+    /* Wait for SYN-ACK */
+    uint32_t start_ticks = pit_get_ticks();
+    while (c->state != STATE_ESTABLISHED) {
+        if (pit_get_ticks() - start_ticks > 500) { /* 5 seconds timeout */
+            c->used = 0;
+            return -1;
+        }
+        __asm__ volatile("hlt");
+    }
+
+    if (id == 0) sync_legacy();
+    return id;
+}
+
 int tcp_connect(uint32_t dst_ip, uint16_t dst_port) {
     /* Find a free slot */
     int id = -1;
@@ -252,7 +394,7 @@ int tcp_send(int conn_id, const uint8_t* data, uint32_t len) {
     tcp_conn_t* c = &conns[conn_id];
     if (!c->used || c->state != STATE_ESTABLISHED) return 0;
 
-    conn_send_packet(c, TCP_ACK | TCP_PSH, data, len);
+    if (!conn_send_packet(c, TCP_ACK | TCP_PSH, data, len)) return 0;
     c->seq_num += len;
     return 1;
 }

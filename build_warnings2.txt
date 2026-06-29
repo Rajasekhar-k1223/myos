@@ -1,0 +1,32 @@
+src/idt.c: In function ‘pic_remap’:
+src/idt.c:65:13: warning: unused variable ‘mask2’ [-Wunused-variable]
+   65 |     uint8_t mask2 = inb(PIC2_DATA);
+      |             ^~~~~
+src/idt.c:64:13: warning: unused variable ‘mask1’ [-Wunused-variable]
+   64 |     uint8_t mask1 = inb(PIC1_DATA);
+      |             ^~~~~
+src/shell.c: In function ‘execute’:
+src/shell.c:540:34: warning: unused variable ‘icmp_reply_src’ [-Wunused-variable]
+  540 |         extern volatile uint32_t icmp_reply_src;
+      |                                  ^~~~~~~~~~~~~~
+src/shell.c: At top level:
+src/shell.c:810:13: warning: ‘wizard’ defined but not used [-Wunused-function]
+  810 | static void wizard(void) {
+      |             ^~~~~~
+src/wm.c:141:23: warning: ‘cursor_bitmap’ defined but not used [-Wunused-const-variable=]
+  141 | static const uint32_t cursor_bitmap[15][10] = {
+      |                       ^~~~~~~~~~~~~
+src/snake.c: In function ‘snake_render’:
+src/snake.c:74:13: warning: unused variable ‘cy’ [-Wunused-variable]
+   74 |         int cy = snake_win->h / 2;
+      |             ^~
+src/snake.c:73:13: warning: unused variable ‘cx’ [-Wunused-variable]
+   73 |         int cx = (snake_win->w / 2) - 36;
+      |             ^~
+src/minesweeper.c: In function ‘minesweeper_render’:
+src/minesweeper.c:107:31: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint32_t’ {aka ‘unsigned int’} [-Wsign-compare]
+  107 |             for (int x = 0; x < my_win->w; x++) {
+      |                               ^
+src/minesweeper.c:113:31: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint32_t’ {aka ‘unsigned int’} [-Wsign-compare]
+  113 |             for (int x = 0; x < my_win->w; x++) {
+      |                               ^

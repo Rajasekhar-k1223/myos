@@ -1,0 +1,15 @@
+./
+./hello.elf
+./cursor.bmp
+./icon_sett.bmp
+./logo.bmp
+./icon_pnt.bmp
+./about.txt
+./readme.txt
+./icon_expl.bmp
+./commands.txt
+./icon_term.bmp
+./c4.elf
+./motd.txt
+./font.ttf
+./hello.txt

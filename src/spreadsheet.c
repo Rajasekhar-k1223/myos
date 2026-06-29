@@ -48,7 +48,8 @@ static int parse_cellref(const char* s, int* col, int* row) {
 static int parse_range(const char* s, int* c0, int* r0, int* c1, int* r1) {
     if (!parse_cellref(s, c0, r0)) return 0;
     while (*s && *s != ':') s++;
-    if (*s != ':') return 0; s++;
+    if (*s != ':') return 0;
+    s++;
     if (!parse_cellref(s, c1, r1)) return 0;
     if (*c0 > *c1) { int t = *c0; *c0 = *c1; *c1 = t; }
     if (*r0 > *r1) { int t = *r0; *r0 = *r1; *r1 = t; }
@@ -105,9 +106,9 @@ static void eval_formula(const char* buf, char* out) {
             (void)first; first = 0;
         }
         if (fi == 0) sprintf(out, "%d", sum);
-        else if (fi == 1) sprintf(out, cnt ? "%d" : "0", cnt ? sum/cnt : 0);
-        else if (fi == 2) sprintf(out, cnt ? "%d" : "0", cnt ? mn : 0);
-        else if (fi == 3) sprintf(out, cnt ? "%d" : "0", cnt ? mx : 0);
+        else if (fi == 1) sprintf(out, "%d", cnt ? sum/cnt : 0);
+        else if (fi == 2) sprintf(out, "%d", cnt ? mn : 0);
+        else if (fi == 3) sprintf(out, "%d", cnt ? mx : 0);
         else              sprintf(out, "%d", cnt);
         return;
     }

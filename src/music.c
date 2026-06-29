@@ -61,11 +61,25 @@ static void music_load_track(int idx) {
     uint8_t* hdr = wav_buffer;
 
     if (hdr[0] == 'R' && hdr[1] == 'I' && hdr[2] == 'F' && hdr[3] == 'F') {
-        /* Standard RIFF/WAV header */
-        uint32_t sample_rate = *(uint32_t*)(hdr + 24);
-        data_size  = *(uint32_t*)(hdr + 40);
-        data_start = 44;
+        /* Scan RIFF chunks to find "data" — don't assume fixed offsets. */
+        uint32_t sample_rate = (sz >= 28) ? *(uint32_t*)(hdr + 24) : 8000;
         sb16_set_sample_rate((uint16_t)sample_rate);
+        /* Walk chunks starting after the fmt chunk */
+        uint32_t pos = 12;
+        data_size  = 0;
+        data_start = 44; /* fallback */
+        while (pos + 8 <= (uint32_t)sz) {
+            uint32_t csize = *(uint32_t*)(hdr + pos + 4);
+            if (hdr[pos]=='d' && hdr[pos+1]=='a' && hdr[pos+2]=='t' && hdr[pos+3]=='a') {
+                data_start = pos + 8;
+                data_size  = csize;
+                break;
+            }
+            pos += 8 + csize;
+        }
+        /* Clamp to actual file size */
+        if (data_start >= (uint32_t)sz) { data_start = 44; data_size = 0; }
+        if (data_start + data_size > (uint32_t)sz) data_size = (uint32_t)sz - data_start;
     } else {
         /* Assume raw 8-bit PCM @ 8 kHz */
         data_size  = (uint32_t)sz;

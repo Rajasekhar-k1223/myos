@@ -1,4 +1,11 @@
+*.iso
+*.img
+*.mp4
+*.png
+*.log
+.claude/
+initrd/
+isodir/
 *.o
 *.bin
-*.iso
-isodir/
+*.elf

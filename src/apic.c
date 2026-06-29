@@ -70,6 +70,17 @@ void apic_eoi(void) {
     apic_write(APIC_EOI_REG, 0);
 }
 
+/* Send TLB-shootdown IPI (vector 0x3E) to all other APIC cores. */
+void apic_send_tlb_shootdown(void) {
+    if (!local_apic_base) return;
+    /* Destination shorthand = 0b11 (All Excluding Self), Fixed delivery, vector 0x3E */
+    apic_write(APIC_ICR_HIGH, 0);
+    apic_write(APIC_ICR_LOW, (3u << 18) | 0x00004000 | 0x3E);
+    /* Wait for delivery */
+    while (apic_read(APIC_ICR_LOW) & (1u << 12))
+        asm volatile("pause");
+}
+
 void apic_timer_init(void) {
     if (!local_apic_base) return;
 

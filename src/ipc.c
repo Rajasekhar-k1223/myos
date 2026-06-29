@@ -97,14 +97,15 @@ int ipc_msgrcv(int qid, ipc_msg_t* msg, uint32_t size, long mtype, int flags) {
                 msg->mtype = src->mtype;
                 uint32_t copy_len = size < IPC_MSG_SIZE ? size : IPC_MSG_SIZE;
                 memcpy(msg->mtext, src->mtext, copy_len);
-                /* Compact the circular buffer: shift remaining entries */
+                /* Compact: shift entries from scan toward tail, then retreat tail */
                 int cur = scan;
                 for (int j = i; j < q->count - 1; j++) {
                     int nxt = (cur + 1) % IPC_MAX_MSG;
                     q->msgs[cur] = q->msgs[nxt];
                     cur = nxt;
                 }
-                q->tail = (q->tail - 1 + IPC_MAX_MSG) % IPC_MAX_MSG;
+                /* Retreat tail by one (cur now points to the vacated last slot) */
+                q->tail = cur;
                 q->count--;
                 return (int)copy_len;
             }

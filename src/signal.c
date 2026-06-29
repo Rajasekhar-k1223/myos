@@ -73,8 +73,10 @@ void signal_dispatch(void) {
         }
 
         if (h != SIG_DFL) {
-            /* User-installed handler — call it directly (kernel-context best-effort) */
-            h(sig);
+            /* Deliver via userspace trampoline: queue into task_t so task_check_signals()
+             * injects the proper stack frame on next return-to-user. */
+            t->pending_signals |= (1u << sig);
+            if (sig < 32) t->sig_handlers[sig] = (uint32_t)(uintptr_t)h;
             continue;
         }
 

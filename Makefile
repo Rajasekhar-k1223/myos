@@ -8,10 +8,10 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/kheap.c src/pit.c src/rtc.c src/shell.c src/tar.c \
          src/task.c src/tss.c src/syscall.c src/user.c \
          src/vesa.c src/bmp.c src/mouse.c src/wm.c \
-         src/snake.c src/calc.c src/clock.c src/wallpaper.c \
+         src/snake.c src/calc.c src/installer.c src/clock.c src/wallpaper.c \
          src/paint.c src/ata.c src/fs.c src/fat16.c src/explorer.c src/speaker.c \
          src/minesweeper.c src/settings.c src/elf.c src/pci.c src/rtl8139.c \
-         src/ethernet.c src/arp.c src/ipv4.c src/icmp.c src/sb16.c src/uhci.c \
+         src/ethernet.c src/arp.c src/ipv4.c src/ipv6.c src/icmp.c src/sb16.c src/uhci.c \
          src/usb.c src/usb_hid.c src/pipe.c \
          src/ttf.c src/vector.c src/music.c src/udp.c src/tcp.c src/browser.c \
          src/acpi.c src/apic.c src/smp.c src/ahci.c src/nvme.c src/ext2.c src/dns.c src/widget.c \
@@ -33,7 +33,10 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/swap.c \
          src/ac97.c \
          src/wav.c \
-         src/sdl_shim.c
+         src/sdl_shim.c \
+         src/ai.c \
+         src/crypto.c \
+         src/firewall.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)

@@ -23,6 +23,7 @@
 #include "syscall.h"
 #include "user.h"
 #include "ata.h"
+#include "ahci.h"
 #include "fs.h"
 #include "fat16.h"
 #include "speaker.h"
@@ -34,7 +35,7 @@
 window_t* shell_window = 0;
 
 /* ── VESA Terminal Driver ────────────────────────────────────────────────── */
-#include "font16.h"   /* 8×16 Terminus Bold — replaces old 8×8 font */
+#include "font16.h"   /* 8×16 Terminus Bold - replaces old 8×8 font */
 
 #define FONT_W  8
 #define FONT_H 16
@@ -127,8 +128,13 @@ void terminal_putchar(char c) {
             ansi_param = ansi_param * 10 + (c - '0');
             return;
         } else if (c == 'm') {
-            if (ansi_param == 0) term_color = 0xAAAAAA;
-            else if (ansi_param >= 30 && ansi_param <= 37) term_color = 0xFFFFFF;
+            if (ansi_param == 0) {
+                term_color = 7; /* reset → VGA light grey */
+            } else if (ansi_param >= 30 && ansi_param <= 37) {
+                /* ANSI 30-37 → VGA colour indices */
+                static const uint8_t ansi_to_vga[8] = {0, 4, 2, 6, 1, 5, 3, 7};
+                term_color = ansi_to_vga[ansi_param - 30];
+            }
             ansi_state = 0;
             return;
         } else if (c == 'J') {
@@ -263,7 +269,8 @@ static void parse_mb2_tags(uint32_t mb2_addr,
                             uint8_t*  out_fb_bpp,
                             uint32_t* out_mmap_addr, uint32_t* out_mmap_esize,
                             uint32_t* out_mmap_bytes,
-                            uint32_t* out_initrd_start) {
+                            uint32_t* out_initrd_start,
+                            uint32_t* out_initrd_end) {
     struct mb2_info* info = (struct mb2_info*)mb2_addr;
     struct mb2_tag*  tag  = mb2_first_tag(info);
 
@@ -293,6 +300,7 @@ static void parse_mb2_tags(uint32_t mb2_addr,
         case MB2_TAG_MODULE: {
             struct mb2_tag_module* mod = (struct mb2_tag_module*)tag;
             *out_initrd_start = mod->mod_start;
+            *out_initrd_end   = mod->mod_end;
             break;
         }
 
@@ -300,6 +308,17 @@ static void parse_mb2_tags(uint32_t mb2_addr,
         }
         tag = mb2_next_tag(tag);
     }
+}
+
+/* ── x87 FPU initialisation ─────────────────────────────────────────────── */
+static void fpu_init(void) {
+    uint32_t cr0;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~(1u << 2);   /* clear EM: use native x87, not software emulation */
+    cr0 &= ~(1u << 3);   /* clear TS: FPU available in this task */
+    cr0 |=  (1u << 1);   /* set MP: raise #NM on WAIT if future TS gets set */
+    __asm__ volatile("mov %0, %%cr0" :: "r"(cr0));
+    __asm__ volatile("fninit");  /* reset FPU to initial state */
 }
 
 /* ── kernel_main ─────────────────────────────────────────────────────────── */
@@ -311,14 +330,14 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
     uint32_t fb_addr = 0, fb_w = 0, fb_h = 0, fb_pitch = 0;
     uint8_t  fb_bpp  = 0;
     uint32_t mmap_addr = 0, mmap_esize = 0, mmap_bytes = 0;
-    uint32_t initrd_start = 0;
+    uint32_t initrd_start = 0, initrd_end = 0;
 
     parse_mb2_tags(mb2_addr,
                    &fb_addr, &fb_w, &fb_h, &fb_pitch, &fb_bpp,
                    &mmap_addr, &mmap_esize, &mmap_bytes,
-                   &initrd_start);
+                   &initrd_start, &initrd_end);
 
-    /* GOP / VBE framebuffer — same linear buffer regardless of BIOS or UEFI */
+    /* GOP / VBE framebuffer - same linear buffer regardless of BIOS or UEFI */
     vesa_init(fb_addr, fb_w, fb_h, fb_pitch, fb_bpp);
     terminal_initialize();
 
@@ -368,6 +387,9 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
     idt_init();
     boot_ok("IDT", "256 vectors loaded, PIC remapped IRQ 0x20-0x2F");
 
+    fpu_init();
+    boot_ok("FPU", "x87 FPU enabled (CR0.EM=0, CR0.TS=0, fninit)");
+
     pit_init(100);
     boot_ok("PIT", "100 Hz system timer (IRQ0)");
 
@@ -381,6 +403,9 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
     boot_section("Memory Subsystem");
 
     pmm_init(mmap_addr, mmap_esize, mmap_bytes);
+    /* protect initrd so the heap doesn't overwrite it */
+    if (initrd_start && initrd_end > initrd_start)
+        pmm_mark_used(initrd_start, initrd_end - initrd_start);
     {
         char det[64];
         uint32_t total_mb = (pmm_get_max_frames() * 4) / 1024;
@@ -390,16 +415,17 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
     }
 
     paging_init(); /* also maps GOP/VBE framebuffer region */
+    paging_register_tlb_handler(); /* IPI vector 0x3E for SMP TLB shootdown */
     {
         char det[64];
         snprintf(det, sizeof(det),
-                 "Paging on — 16 MB mapped + GOP FB @ 0x%08X (%ux%u)",
+                 "Paging on - 256 MB mapped + GOP FB @ 0x%08X (%ux%u)",
                  fb_addr, fb_w, fb_h);
         boot_ok("PGN", det);
     }
 
     kheap_init();
-    boot_ok("HEP", "1 MB kernel heap initialized");
+    boot_ok("HEP", "32 MB kernel heap initialized");
 
     /* ── Real-Time Clock ── */
     boot_section("Real-Time Clock");
@@ -420,39 +446,43 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
             bmp_draw_file("logo.bmp", 850, 50);
         } else {
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
-            terminal_writestring(BOX_V "  [WARN]  No RAM disk — ls/cat unavailable\n");
+            terminal_writestring(BOX_V "  [WARN]  No RAM disk - ls/cat unavailable\n");
             terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
         }
     }
 
-    /* ── ATA Disk + FAT16 ── */
+    /* ── ATA/AHCI + FAT16 ── */
     boot_section("Persistent Storage");
     {
         char det[64];
+        int disk_ok = 0;
         if (ata_init()) {
             boot_ok("ATA", "Primary IDE disk detected (PIO mode)");
+            disk_ok = 1;
+        } else {
+            ahci_init();
+            /* ahci_init prints its own status; check if it found a port */
+            boot_ok("AHC", "SATA/AHCI controller probed (VMware / modern hardware)");
+            disk_ok = 1;  /* attempt FAT16 regardless */
+        }
+        if (disk_ok) {
             if (fat16_init()) {
-                boot_ok("FAT", "FAT16 filesystem mounted — 'fat ls/read/write' available");
+                boot_ok("FAT", "FAT16 filesystem mounted - 'fat ls/read/write' available");
             } else {
                 terminal_setcolor(vga_entry_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK));
-                terminal_writestring(BOX_V "  [WARN]  FAT16 not found — disk may need formatting\n");
+                terminal_writestring(BOX_V "  [WARN]  FAT16 not found - disk may need formatting\n");
                 terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
                 (void)det;
             }
-        } else {
-            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
-            terminal_writestring(BOX_V "  [WARN]  No ATA disk — disk commands unavailable\n");
-            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
-            (void)det;
         }
     }
 
     /* ── Multitasking ── */
     boot_section("Multitasking");
     tasking_init();
-    boot_ok("TSK", "Task 0 (kernel) adopted — round-robin scheduler ready");
+    boot_ok("TSK", "Task 0 (kernel) adopted - round-robin scheduler ready");
     pit_enable_scheduling();
-    boot_ok("SCH", "Preemptive scheduler active — 20 ms time slice (2 ticks)");
+    boot_ok("SCH", "Preemptive scheduler active - 20 ms time slice (2 ticks)");
 
     /* ── User Mode ── */
     boot_section("User Mode & Syscalls");

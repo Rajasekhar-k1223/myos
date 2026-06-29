@@ -46,11 +46,15 @@ static task_t* alloc_slot(void) {
 /* ── Public API ──────────────────────────────────────────────────────────── */
 
 task_t* task_current(void) {
-    return &tasks[current_tasks[apic_get_id()]];
+    int idx = current_tasks[apic_get_id()];
+    if (idx < 0 || idx >= MAX_TASKS) return &tasks[0];
+    return &tasks[idx];
 }
 
 uint32_t task_getpid(void) {
-    return tasks[current_tasks[apic_get_id()]].id;
+    int idx = current_tasks[apic_get_id()];
+    if (idx < 0 || idx >= MAX_TASKS) return 0;
+    return tasks[idx].id;
 }
 
 uint32_t task_count(void) {
@@ -164,6 +168,8 @@ int task_create_user(const char* name, uint32_t entry, uint32_t user_stack_top, 
     strncpy(t->name, name, TASK_NAME_LEN - 1);
 
     t->page_directory = page_directory;
+    t->mmap_next = 0x40000000;
+    t->brk       = 0x50000000;
     uint32_t* sp = (uint32_t*)(t->stack + TASK_STACK_SIZE);
     t->kernel_stack = (uint32_t)sp;
 
@@ -195,11 +201,11 @@ int task_fork(struct registers* regs) {
     task_t* parent = task_current();
     task_t* child = alloc_slot();
     if (!child) { unlock_sched(); return -1; }
-    /* Ensure child starts with clean signal state */
+    memcpy(child, parent, sizeof(task_t));
+
+    /* Reset signal state: child must not inherit parent's pending signals */
     child->pending_signals    = 0;
     child->in_signal_handler  = 0;
-
-    memcpy(child, parent, sizeof(task_t));
 
     child->id = next_id++;
     child->parent_id = parent->id;
@@ -370,11 +376,6 @@ void schedule(void) {
 
     // Switch Address Space
     if (tasks[next].page_directory && tasks[next].page_directory != current_page_directory) {
-        if (tasks[next].id == 2 || tasks[next].id == 5) {
-            extern void com1_print(const char*);
-            com1_print("Switching to test task!\n");
-        }
-        
         paging_switch_directory(tasks[next].page_directory);
     }
     

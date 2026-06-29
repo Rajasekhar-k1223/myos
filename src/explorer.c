@@ -68,7 +68,7 @@ static void explorer_render(window_t* win) {
         /* ── FAT16 files ──────────────────────────────────────────── */
         wm_draw_string_window(win, 4, 24, "FAT16 Disk (disk.img)", 0x79C0FF);
 
-        char fnames[64][13];
+        fat16_file_info_t fnames[64];
         int num = fat16_list_files(fnames, 64);
 
         for (int i = 0; i < num; i++) {
@@ -77,7 +77,7 @@ static void explorer_render(window_t* win) {
             int px  = 8  + col * 90;
             int py  = 42 + row * 72;
             draw_file_icon(win, px, py, 0x238636);
-            wm_draw_string_window(win, px, py + 40, fnames[i], 0xC9D1D9);
+            wm_draw_string_window(win, px, py + 40, fnames[i].name, 0xC9D1D9);
         }
         if (num == 0)
             wm_draw_string_window(win, 10, 44, "(no files — format with 'fat ls')", 0x484F58);
@@ -131,7 +131,7 @@ void explorer_handle_click(window_t* win, int mx, int my) {
         }
     } else {
         /* FAT16 file click → open in Notepad */
-        char fnames[64][13];
+        fat16_file_info_t fnames[64];
         int num = fat16_list_files(fnames, 64);
         for (int i = 0; i < num; i++) {
             int col = i % 4, row = i / 4;
@@ -139,10 +139,10 @@ void explorer_handle_click(window_t* win, int mx, int my) {
             int py = 42 + row * 72;
             if (lx >= px && lx <= px + 28 && ly >= py && ly <= py + 36) {
                 static uint8_t _rbuf[8192];
-                int r = fat16_read_file(fnames[i], _rbuf, sizeof(_rbuf));
+                int r = fat16_read_file(fnames[i].name, _rbuf, sizeof(_rbuf));
                 if (r > 0) {
                     char title[80]; strcpy(title, "Notepad - ");
-                    strncat(title, fnames[i], 63);
+                    strncat(title, fnames[i].name, 63);
                     window_t* tw = wm_create_window(220, 160, 400, 300, title);
                     if (tw)
                         for (int j = 0; j < r; j++)

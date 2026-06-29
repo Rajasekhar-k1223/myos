@@ -3,15 +3,13 @@
 // basic HTML rendering (h1-h4, p, br, b, i, a, hr, title, ul/li)
 
 #include "browser.h"
-#include "wm.h"
+#include "widget.h"
+#include "tcp.h"
+#include "dns.h"
 #include "string.h"
 #include "kernel.h"
-#include "tcp.h"
-#include "pit.h"
 #include "ttf.h"
-#include "kheap.h"
-
-// ─── Constants ────────────────────────────────────────────────────────────────
+#include "pit.h"
 #define TOOLBAR_H      36
 #define STATUS_H       20
 #define SCROLLBAR_W    12
@@ -417,7 +415,7 @@ static void do_navigate(void) {
 
     scroll_y = 0;
 
-    if (tcp_connect(ip, port)) {
+    if (tcp_connect(ip, port) >= 0) {
         char req[512];
         strcpy(req, "GET / HTTP/1.1\r\nHost: ");
         strcat(req, url_bar);

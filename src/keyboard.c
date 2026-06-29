@@ -61,6 +61,35 @@ static void keyboard_callback(struct registers* regs) {
     if (sc == 0x1D) { ctrl_held = 1; return; }
     if (sc == 0x9D) { ctrl_held = 0; return; }
 
+    extern int sdl_app_active;
+    if (sdl_app_active) {
+        if (ctrl_held && (sc == 0x01 || sc == 0x81)) { // Ctrl+Esc
+            extern void sdl_emergency_quit(void);
+            sdl_emergency_quit();
+            return;
+        }
+        extern uint32_t sdl_map_key(char c);
+        extern void sdl_push_keydown(uint32_t sym);
+        extern void sdl_push_keyup(uint32_t sym);
+        
+        int is_release = (sc & 0x80);
+        uint8_t base_sc = sc & 0x7F;
+        char c = 0;
+        
+        if (base_sc == 0x48) c = '\x10'; // up
+        else if (base_sc == 0x50) c = '\x11'; // down
+        else if (base_sc == 0x4B) c = '\x12'; // left
+        else if (base_sc == 0x4D) c = '\x13'; // right
+        else if (base_sc < sizeof(sc_ascii)) c = sc_ascii[base_sc];
+        
+        if (c) {
+            uint32_t sym = sdl_map_key(c);
+            if (is_release) sdl_push_keyup(sym);
+            else sdl_push_keydown(sym);
+        }
+        return;
+    }
+
     if (sc & 0x80) return; /* ignore all other key-release events */
 
     if (sc == 0x49) { // Page Up

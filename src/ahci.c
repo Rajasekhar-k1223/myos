@@ -35,6 +35,7 @@ static void stop_cmd(HBA_PORT* port) {
 }
 
 static void port_rebase(HBA_PORT* port, int portno) {
+    (void)portno;
     terminal_printf("   - Rebase: stopping...\n");
     stop_cmd(port);
 
@@ -144,15 +145,16 @@ int ahci_read_sector(HBA_PORT* port, uint32_t startl, uint32_t starth, uint32_t 
     port->ci = 1 << slot; // Issue command
 
     // Wait for completion
-    while (1) {
+    int read_timeout = 0x1000000;
+    while (read_timeout-- > 0) {
         if ((port->ci & (1 << slot)) == 0) break;
-        if (port->is & HBA_PxIS_TFES) { // Task file error
+        if (port->is & HBA_PxIS_TFES) {
             terminal_printf("[AHCI] Read disk error\n");
             return 0;
         }
     }
+    if (read_timeout <= 0) { terminal_printf("[AHCI] Read timeout\n"); return 0; }
 
-    // Check again
     if (port->is & HBA_PxIS_TFES) {
         terminal_printf("[AHCI] Read disk error\n");
         return 0;
@@ -277,15 +279,16 @@ int ahci_write_sector(HBA_PORT* port, uint32_t startl, uint32_t starth, uint32_t
     port->ci = 1 << slot; // Issue command
 
     // Wait for completion
-    while (1) {
+    int write_timeout = 0x1000000;
+    while (write_timeout-- > 0) {
         if ((port->ci & (1 << slot)) == 0) break;
-        if (port->is & HBA_PxIS_TFES) { // Task file error
+        if (port->is & HBA_PxIS_TFES) {
             terminal_printf("[AHCI] Write disk error\n");
             return 0;
         }
     }
+    if (write_timeout <= 0) { terminal_printf("[AHCI] Write timeout\n"); return 0; }
 
-    // Check again
     if (port->is & HBA_PxIS_TFES) {
         terminal_printf("[AHCI] Write disk error\n");
         return 0;

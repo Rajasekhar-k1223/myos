@@ -50,6 +50,8 @@ typedef struct task {
     uint32_t       sig_handlers[32];
     uint32_t       in_signal_handler;
     uint32_t       tls_base;
+    uint32_t       mmap_next; /* next virtual address for sys_mmap */
+    uint32_t       brk;       /* current program break for sys_sbrk */
 } task_t;
 
 /* ── Public API ──────────────────────────────────────────────────────────── */

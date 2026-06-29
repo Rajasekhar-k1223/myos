@@ -96,9 +96,13 @@ typedef union {
 } SDL_Event;
 
 /* ── Global shim state (defined in sdl_shim.c) ────────────────────────────── */
-extern uint32_t* __sdl_framebuf;
-extern int       __sdl_screen_w;
-extern int       __sdl_screen_h;
+extern uint32_t*   __sdl_framebuf;
+extern int         __sdl_screen_w;
+extern int         __sdl_screen_h;
+extern int         sdl_app_active;
+extern SDL_Surface __sdl_surf;
+
+void sdl_emergency_quit(void);
 
 /* ── Inline implementations ───────────────────────────────────────────────── */
 
@@ -108,6 +112,9 @@ static inline int SDL_Init(uint32_t flags) {
 }
 
 static inline void SDL_Quit(void) {
+    sdl_app_active = 0;
+    extern void wm_request_redraw(void);
+    wm_request_redraw();
 }
 
 /*
@@ -119,14 +126,18 @@ static inline void SDL_Quit(void) {
 static inline SDL_Surface* SDL_SetVideoMode(int w, int h, int bpp, uint32_t flags) {
     (void)bpp; (void)flags;
     extern void* kmalloc(uint32_t);
-    static SDL_Surface __sdl_surf;
+    extern void  kfree(void*);
+    /* Free previous framebuffer if SDL_SetVideoMode called more than once */
+    if (__sdl_framebuf) { kfree(__sdl_framebuf); __sdl_framebuf = 0; }
     __sdl_screen_w = w;
     __sdl_screen_h = h;
     __sdl_framebuf = (uint32_t*)kmalloc((uint32_t)(w * h * 4));
+    if (!__sdl_framebuf) return 0;
     __sdl_surf.pixels = __sdl_framebuf;
     __sdl_surf.w      = w;
     __sdl_surf.h      = h;
     __sdl_surf.pitch  = w * 4;
+    sdl_app_active = 1;
     return &__sdl_surf;
 }
 

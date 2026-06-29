@@ -4,6 +4,7 @@
 #include "pmm.h"
 #include "paging.h"
 #include "string.h"
+#include "kheap.h"
 
 /* NVMe Admin & I/O Queue state */
 #define NVME_QUEUE_DEPTH 4

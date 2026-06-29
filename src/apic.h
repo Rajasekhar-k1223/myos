@@ -9,5 +9,6 @@ void apic_send_sipi(uint8_t apic_id, uint8_t vector);
 uint8_t apic_get_id(void);
 void apic_timer_init(void);
 void apic_eoi(void);
+void apic_send_tlb_shootdown(void);
 
 #endif

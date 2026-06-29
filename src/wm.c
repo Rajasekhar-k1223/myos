@@ -1,4 +1,5 @@
 #include "wm.h"
+#include "kernel.h"
 #include "sdl_shim.h"
 #include "mouse.h"
 #include "vesa.h"
@@ -17,9 +18,10 @@
 #include "paint.h"
 #include "explorer.h"
 #include "speaker.h"
-#include "kheap.h"
 #include "ttf.h"
 #include "widget.h"
+#include "minesweeper.h"
+#include "settings.h"
 
 #define MAX_WINDOWS 10
 
@@ -169,6 +171,11 @@ void wm_init(void) {
 
     // ── Gradient Desktop Background (deep space / aurora) ────────────────────
     desktop_bg_buffer = (uint32_t*)kmalloc(vesa_width * vesa_height * 4);
+    if (!desktop_bg_buffer) {
+        terminal_printf("[WM] FATAL: desktop buffer alloc failed (%ux%u, %u bytes)\n",
+                        vesa_width, vesa_height, vesa_width * vesa_height * 4);
+        return;
+    }
     for (uint32_t row = 0; row < vesa_height; row++) {
         // Vertical gradient: deep navy → teal-purple
         uint8_t t = (uint8_t)((row * 255) / (vesa_height > 1 ? vesa_height - 1 : 1));
@@ -221,9 +228,7 @@ void wm_init(void) {
     bmp_load_to_buffer("icon_pnt.bmp",  icon_pnt_buf,  32, 32, 0, 0);
     bmp_load_to_buffer("cursor.bmp",    cursor_buf,    16, 16, 0, 0);
     
-    // Create initial terminal
-    extern window_t* shell_window;
-    shell_window = wm_create_window(50, 50, 600, 400, "Terminal");
+
     
     // Cache desktop icons
     char name[100];
@@ -282,16 +287,23 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
         win->ansi_state = 0;
         win->ansi_param = 0;
         win->term_grid = (uint32_t*)kmalloc(win->term_rows * win->term_cols * 4);
-        for (uint32_t i = 0; i < win->term_rows * win->term_cols; i++) {
-            win->term_grid[i] = (' ') | (0xAAAAAA << 8);
+        if (win->term_grid) {
+            for (uint32_t i = 0; i < win->term_rows * win->term_cols; i++) {
+                win->term_grid[i] = (' ') | (0xAAAAAA << 8);
+            }
         }
     } else {
         win->term_grid = NULL;
     }
 
-    focused_window = win;
-    
     win->buffer = (uint32_t*)kmalloc(w * h * 4);
+    if (!win->buffer) {
+        num_windows--; // Rollback window creation
+        if (win->term_grid) kfree(win->term_grid);
+        return NULL;
+    }
+
+    focused_window = win;
     
     // Fill window with background color
     for (uint32_t i = 0; i < w * h; i++) {
@@ -425,7 +437,7 @@ int wm_handle_shortcut(char key) {
             window_t* np = wm_notepad_open("Notepad - notes.txt", 130, 90);
             if (np) {
                 np->text_len = (uint32_t)r;
-                memcpy(np->text_buf, load_buf, (uint32_t)r + 1);
+                memcpy(np->text_buf, load_buf, (uint32_t)r);
                 wm_notepad_reload(np, load_buf, (uint32_t)r);
             }
             wm_toast("Loaded: notes.txt", 200);
@@ -944,11 +956,14 @@ static void wm_update_system_monitor(window_t* w) {
     wm_draw_string_window(w, 10, 178, "Audio:   SB16  8-bit PCM DMA", 0x79C0FF);
     wm_draw_string_window(w, 10, 196, "Storage: ATA(FAT16) | AHCI(EXT2) | NVMe", 0x79C0FF);
 
-    wm_draw_string_window(w, 10, 220, "Press [x] to close", 0x484F58);
+        wm_draw_string_window(w, 10, 220, "Press [x] to close", 0x484F58);
     redraw_needed = 1;
 }
 
 static void wm_render(void) {
+    extern int sdl_app_active;
+    if (sdl_app_active) return;
+    
     extern uint32_t vesa_width, vesa_height;
     
     // 1. Draw Desktop Background
@@ -1394,6 +1409,9 @@ static void wm_render(void) {
 }
 
 void wm_process_events(void) {
+    extern int sdl_app_active;
+    if (sdl_app_active) return;
+    
     extern void music_process_audio(void);
     music_process_audio();
     
@@ -1739,6 +1757,8 @@ void wm_process_events(void) {
                             w->active = 0;
                             extern window_t* shell_window;
                             if (shell_window == w) shell_window = 0;
+                            extern window_t* focused_window;
+                            if (focused_window == w) focused_window = 0;
                             clicked_on_something = 1;
                             redraw_needed = 1;
                             break;

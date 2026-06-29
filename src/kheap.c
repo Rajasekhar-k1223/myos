@@ -8,8 +8,8 @@ typedef struct header {
 } header_t;
 
 static header_t* head = NULL;
-// Expand heap to 8MB to support double buffering (1024x768x32 = 3.1MB)
-#define HEAP_INIT_SIZE (8 * 1024 * 1024)
+// Expand heap to 32MB to support double buffering and multiple windows
+#define HEAP_INIT_SIZE (32 * 1024 * 1024)
 
 void kheap_init(void) {
     // Allocate contiguous frames for our simple heap

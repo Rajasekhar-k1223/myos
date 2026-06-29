@@ -27,6 +27,25 @@ void mouse_handler_inject(int rel_x, int rel_y, int z_delta, uint8_t buttons) {
     if (mouse_x > (int)vesa_width - 1) mouse_x = vesa_width - 1;
     if (mouse_y > (int)vesa_height - 1) mouse_y = vesa_height - 1;
     
+    extern int sdl_app_active;
+    if (sdl_app_active) {
+        extern void sdl_push_mousemove(int x, int y, int dx, int dy);
+        extern void sdl_push_mousebutton(int down, uint8_t button, int x, int y);
+        
+        sdl_push_mousemove(mouse_x, mouse_y, rel_x, -rel_y);
+        
+        static uint8_t last_buttons = 0;
+        if ((buttons & 1) && !(last_buttons & 1)) sdl_push_mousebutton(1, 1, mouse_x, mouse_y); // Left down
+        if (!(buttons & 1) && (last_buttons & 1)) sdl_push_mousebutton(0, 1, mouse_x, mouse_y); // Left up
+        if ((buttons & 2) && !(last_buttons & 2)) sdl_push_mousebutton(1, 3, mouse_x, mouse_y); // Right down
+        if (!(buttons & 2) && (last_buttons & 2)) sdl_push_mousebutton(0, 3, mouse_x, mouse_y); // Right up
+        if ((buttons & 4) && !(last_buttons & 4)) sdl_push_mousebutton(1, 2, mouse_x, mouse_y); // Middle down
+        if (!(buttons & 4) && (last_buttons & 4)) sdl_push_mousebutton(0, 2, mouse_x, mouse_y); // Middle up
+        
+        last_buttons = buttons;
+        return;
+    }
+
     extern void wm_request_redraw(void);
     extern void wm_process_scroll(int delta);
     if (z_delta != 0) wm_process_scroll(z_delta);
