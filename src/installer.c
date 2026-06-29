@@ -145,6 +145,8 @@ void installer_run(void) {
 
         // Force screen refresh
         wm_request_redraw();
+        extern void wm_process_events(void);
+        wm_process_events();
         
         // Wait to simulate long installation of massive files
         for (int d = 0; d < 30; d++) installer_delay();
