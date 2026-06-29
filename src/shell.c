@@ -880,9 +880,10 @@ static void wizard(void) {
 
 /* ── shell_init ──────────────────────────────────────────────────────────── */
 void shell_init(void) {
-    // Skip the first-boot wizard since we are in the GUI now
-    // and the wizard uses blocking polling which would freeze the compositor!
     print_prompt();
     extern void wm_request_redraw(void);
     wm_request_redraw();
+    
+    // Automatically launch the graphical installer when booting from the Live CD
+    installer_run();
 }
