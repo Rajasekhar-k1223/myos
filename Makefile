@@ -102,7 +102,7 @@ run: elsea.iso disk.img ext2_disk.img nvme_disk.img
 	    -drive file=nvme_disk.img,format=raw,if=none,id=nvmedisk -device nvme,serial=deadbeef,drive=nvmedisk \
 	    -netdev user,id=n0 -device rtl8139,netdev=n0 \
 	    -audiodev pa,id=snd0 -device sb16,audiodev=snd0 \
-	    -usb -device usb-uhci,id=uhci0 \
+	    -usb -device piix3-usb-uhci,id=uhci0 \
 	    -boot d -smp 4
 
 run-uefi: elsea.iso disk.img
