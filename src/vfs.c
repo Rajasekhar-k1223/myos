@@ -3,6 +3,7 @@
 #include "string.h"
 #include "tar.h"
 #include "fat16.h"
+#include "fat32.h"
 #include "ext2.h"
 #include "kheap.h"
 
@@ -78,11 +79,14 @@ void vfs_init(void) {
     /* Auto-mount initrd at "/" */
     vfs_mount("/", VFS_INITRD, VFS_RDONLY);
 
-    /* Auto-mount FAT16 at "/mnt/fat" if available */
+    /* Auto-mount FAT16 at "/mnt/fat" if available, else try FAT32 */
     extern int fat16_init(void);
     if (fat16_init()) {
         vfs_mount("/mnt/fat", VFS_FAT16, 0);
         terminal_printf("[VFS] Mounted FAT16 at /mnt/fat\n");
+    } else if (fat32_init()) {
+        vfs_mount("/mnt/fat", VFS_FAT32, 0);
+        terminal_printf("[VFS] Mounted FAT32 at /mnt/fat\n");
     }
 
     /* Auto-mount EXT2 at "/mnt/ext2" if available */
@@ -155,6 +159,17 @@ int vfs_ls(const char* path, char names[][64], int max) {
         }
         break;
     }
+    case VFS_FAT32: {
+        fat32_file_info_t files[64];
+        int n = fat32_list_files(files, max < 64 ? max : 64);
+        if (n < 0) n = 0;
+        for (int i = 0; i < n && count < max; i++) {
+            strncpy(names[count], files[i].name, 63);
+            names[count][63] = '\0';
+            count++;
+        }
+        break;
+    }
     case VFS_EXT2: {
         int cap = max < 128 ? max : 128;
         char e2names[128][13];
@@ -209,6 +224,19 @@ int vfs_open(const char* path, int flags) {
         f->data = NULL;
         f->size = 0;
         break;
+    case VFS_FAT32: {
+        uint8_t* tmp = (uint8_t*)kmalloc(65536);
+        if (!tmp) return -1;
+        int r = fat32_read_file(rel, tmp, 65536);
+        if (r < 0) { kfree(tmp); return -1; }
+        void* fbuf = kmalloc((uint32_t)r);
+        if (!fbuf) { kfree(tmp); return -1; }
+        memcpy(fbuf, tmp, (uint32_t)r);
+        kfree(tmp);
+        f->data = fbuf;
+        f->size = (uint32_t)r;
+        break;
+    }
     case VFS_EXT2: {
         uint8_t* ext2_tmp = (uint8_t*)kmalloc(65536);
         if (!ext2_tmp) return -1;
@@ -245,7 +273,6 @@ int vfs_read(int fd, void* buf, uint32_t len) {
         return (int)len;
     }
     case VFS_FAT16: {
-        /* Read into a temp buffer at offset f->pos, then advance position */
         static uint8_t fat16_tmp[65536];
         int total = fat16_read_file(f->path, fat16_tmp, sizeof(fat16_tmp));
         if (total < 0) return -1;
@@ -253,6 +280,14 @@ int vfs_read(int fd, void* buf, uint32_t len) {
         uint32_t avail = (uint32_t)total - f->pos;
         if (len > avail) len = avail;
         memcpy(buf, fat16_tmp + f->pos, len);
+        f->pos += len;
+        return (int)len;
+    }
+    case VFS_FAT32: {
+        if (!f->data) return -1;
+        uint32_t avail = f->size - f->pos;
+        if (len > avail) len = avail;
+        memcpy(buf, (uint8_t*)f->data + f->pos, len);
         f->pos += len;
         return (int)len;
     }
@@ -277,6 +312,8 @@ int vfs_write(int fd, const void* buf, uint32_t len) {
     switch (f->fs_type) {
     case VFS_FAT16:
         return fat16_write_file(f->path, (const uint8_t*)buf, len);
+    case VFS_FAT32:
+        return fat32_write_file(f->path, (const uint8_t*)buf, len);
     case VFS_INITRD:
         return -1; /* read-only */
     default:
@@ -287,7 +324,7 @@ int vfs_write(int fd, const void* buf, uint32_t len) {
 int vfs_close(int fd) {
     if (fd < 0 || fd >= VFS_MAX_FDS) return -1;
     vfs_fd_t* f = &open_files[fd];
-    if (f->fs_type == VFS_EXT2 && f->data) {
+    if ((f->fs_type == VFS_EXT2 || f->fs_type == VFS_FAT32) && f->data) {
         kfree(f->data);
         f->data = NULL;
     }

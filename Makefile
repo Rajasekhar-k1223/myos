@@ -1,25 +1,36 @@
 CC      = gcc -m32
 AS      = gcc -m32
-CFLAGS  = -m32 -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -fno-pie -fno-pic
+CFLAGS  = -m32 -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -fno-pie -fno-pic -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
 LDFLAGS = -m32 -T src/linker.ld -nostdlib -no-pie -Wl,--build-id=none
 
 SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/string.c src/sprintf.c src/pmm.c src/paging.c \
          src/kheap.c src/pit.c src/rtc.c src/shell.c src/tar.c \
          src/task.c src/tss.c src/syscall.c src/user.c \
-         src/vesa.c src/bmp.c src/mouse.c src/wm.c \
+         src/vesa.c src/bmp.c src/mouse.c src/wm.c src/nk_backend.c \
          src/snake.c src/calc.c src/installer.c src/clock.c src/wallpaper.c \
          src/paint.c src/ata.c src/fs.c src/fat16.c src/explorer.c src/speaker.c \
          src/minesweeper.c src/settings.c src/elf.c src/pci.c src/rtl8139.c \
          src/ethernet.c src/arp.c src/ipv4.c src/ipv6.c src/icmp.c src/sb16.c src/uhci.c \
          src/usb.c src/usb_hid.c src/pipe.c \
-         src/ttf.c src/vector.c src/music.c src/udp.c src/tcp.c src/browser.c \
+         src/sysmon.c src/calendar.c src/screenshot.c \
+         src/diskutil.c src/weather.c src/fontview.c src/charmap.c src/recorder.c \
+         src/search.c src/ttf.c src/vector.c src/music.c src/udp.c src/tcp.c src/browser.c src/html5.c \
          src/acpi.c src/apic.c src/smp.c src/ahci.c src/nvme.c src/ext2.c src/dns.c src/widget.c \
-         src/imgview.c \
+         src/imgview.c src/login.c src/wifi.c src/ssl.c \
          src/dhcp.c \
          src/fat32.c \
          src/signal.c \
          src/png.c \
+         src/jpeg.c \
+         src/mathf.c \
+         src/svg.c \
+         src/nostdio.c \
+         src/nvg_backend.c \
+         src/gl_backend.c \
+         src/freetype.c \
+         src/spirv.c \
+         src/vk_backend.c \
          src/mixer.c \
          src/xhci.c \
          src/spreadsheet.c \
@@ -36,7 +47,16 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/sdl_shim.c \
          src/ai.c \
          src/crypto.c \
-         src/firewall.c
+         src/firewall.c \
+         src/i18n.c \
+         src/pkg.c \
+         src/ota.c \
+         src/appstore.c \
+         src/bluetooth.c \
+         src/voice.c \
+         src/fde.c \
+         src/tpm.c \
+         src/gpu.c
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
@@ -87,13 +107,42 @@ initrd/c4.elf: src/compiler/c4.c initrd/libc.so
 initrd/test_pipe.elf: src/test_pipe.c initrd/libc.so
 	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/test_pipe.c initrd/libc.so -o initrd/test_pipe.elf
 
-elsea.iso: elsea.bin disk.img hello.elf initrd/c4.elf initrd/test_pipe.elf
+initrd/bin/ls.elf: src/coreutils/ls.c initrd/libc.so src/libc/crt0.o
+	mkdir -p initrd/bin
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/libc/crt0.o src/coreutils/ls.c initrd/libc.so -o initrd/bin/ls.elf
+
+initrd/bin/cat.elf: src/coreutils/cat.c initrd/libc.so src/libc/crt0.o
+	mkdir -p initrd/bin
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/libc/crt0.o src/coreutils/cat.c initrd/libc.so -o initrd/bin/cat.elf
+
+initrd/bin/echo.elf: src/coreutils/echo.c initrd/libc.so src/libc/crt0.o
+	mkdir -p initrd/bin
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/libc/crt0.o src/coreutils/echo.c initrd/libc.so -o initrd/bin/echo.elf
+
+initrd/bin/init.elf: src/coreutils/init.c initrd/libc.so src/libc/crt0.o
+	mkdir -p initrd/bin
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/libc/crt0.o src/coreutils/init.c initrd/libc.so -o initrd/bin/init.elf
+
+initrd/bin/compositor.elf: src/coreutils/compositor.c initrd/libc.so src/libc/crt0.o
+	mkdir -p initrd/bin
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/libc/crt0.o src/coreutils/compositor.c initrd/libc.so -o initrd/bin/compositor.elf
+
+initrd/bin/terminal.elf: src/coreutils/terminal.c initrd/libc.so src/libc/crt0.o
+	mkdir -p initrd/bin
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/libc/crt0.o src/coreutils/terminal.c initrd/libc.so -o initrd/bin/terminal.elf
+
+initrd/bin/audio.elf: src/coreutils/audio.c initrd/libc.so
+	mkdir -p initrd/bin
+	gcc -m32 -nostdlib -fno-builtin -fno-stack-protector -fno-pie -no-pie -T src/linker_user.ld src/libc/crt0.o $< initrd/libc.so -o $@
+
+elsea.iso: elsea.bin disk.img hello.elf initrd/c4.elf initrd/test_pipe.elf initrd/bin/ls.elf initrd/bin/cat.elf initrd/bin/echo.elf initrd/bin/init.elf initrd/bin/compositor.elf initrd/bin/terminal.elf initrd/bin/audio.elf
 	mkdir -p isodir/boot/grub
 	cp elsea.bin isodir/boot/elsea.bin
 	cp grub/grub.cfg isodir/boot/grub/grub.cfg
 	cd initrd && tar -cvf ../isodir/boot/initrd.tar .
 	grub-mkrescue -o elsea.iso isodir \
 	    --modules="normal part_gpt part_msdos fat iso9660 multiboot2 search" 2>&1
+	truncate -s 2G elsea.iso
 
 run: elsea.iso disk.img ext2_disk.img nvme_disk.img
 	qemu-system-i386 -cdrom elsea.iso \
@@ -102,7 +151,9 @@ run: elsea.iso disk.img ext2_disk.img nvme_disk.img
 	    -drive file=nvme_disk.img,format=raw,if=none,id=nvmedisk -device nvme,serial=deadbeef,drive=nvmedisk \
 	    -netdev user,id=n0 -device rtl8139,netdev=n0 \
 	    -audiodev pa,id=snd0 -device sb16,audiodev=snd0 \
-	    -usb -device usb-uhci,id=uhci0 \
+	    -usb -device usb-tablet \
+	    -serial stdio \
+	    -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
 	    -boot d -smp 4
 
 run-uefi: elsea.iso disk.img

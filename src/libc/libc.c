@@ -5,27 +5,52 @@
 typedef unsigned int  size_t;
 typedef unsigned int  uint32_t;
 
-// ─── Syscall stubs ───────────────────────────────────────────────────────────
-static inline unsigned int syscall1(unsigned int num, unsigned int a1) {
+unsigned int syscall0(unsigned int num) {
     unsigned int ret;
-    asm volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(a1));
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num));
     return ret;
 }
-static inline unsigned int syscall2(unsigned int num, unsigned int a1, unsigned int a2) {
+unsigned int syscall1(unsigned int num, unsigned int a1) {
     unsigned int ret;
-    asm volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(a1), "c"(a2));
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(a1));
     return ret;
 }
-static inline unsigned int syscall3(unsigned int num, unsigned int a1, unsigned int a2, unsigned int a3) {
+unsigned int syscall2(unsigned int num, unsigned int a1, unsigned int a2) {
     unsigned int ret;
-    asm volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(a1), "c"(a2), "d"(a3));
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(a1), "c"(a2));
     return ret;
 }
-static inline unsigned int syscall0(unsigned int num) {
+unsigned int syscall3(unsigned int num, unsigned int a1, unsigned int a2, unsigned int a3) {
     unsigned int ret;
-    asm volatile("int $0x80" : "=a"(ret) : "a"(num));
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(a1), "c"(a2), "d"(a3));
     return ret;
 }
+unsigned int syscall4(unsigned int num, unsigned int a1, unsigned int a2, unsigned int a3, unsigned int a4) {
+    unsigned int ret;
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(a1), "c"(a2), "d"(a3), "S"(a4));
+    return ret;
+}
+unsigned int syscall5(unsigned int num, unsigned int a1, unsigned int a2, unsigned int a3, unsigned int a4, unsigned int a5) {
+    unsigned int ret;
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(a1), "c"(a2), "d"(a3), "S"(a4), "D"(a5));
+    return ret;
+}
+
+// ─── Sys V IPC ───────────────────────────────────────────────────────────────
+int msgget(int key, int msgflg) {
+    return (int)syscall2(26, (unsigned int)key, (unsigned int)msgflg);
+}
+
+int msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg) {
+    return (int)syscall3(27, (unsigned int)msqid, (unsigned int)msgp, (unsigned int)msgsz);
+}
+
+int msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg) {
+    return (int)syscall4(28, (unsigned int)msqid, (unsigned int)msgp, (unsigned int)msgsz, (unsigned int)msgtyp);
+}
+
+// ─── Entry Point ─────────────────────────────────────────────────────────────
+// Moved to crt0.c
 
 // ─── string.h ────────────────────────────────────────────────────────────────
 void* memcpy(void* dest, const void* src, size_t n) {

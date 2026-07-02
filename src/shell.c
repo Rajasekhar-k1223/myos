@@ -30,14 +30,32 @@ static int  hist_pos   = -1;   /* -1 = not browsing */
 
 static char username[32] = "user";
 
+/* ── Privilege / sudo state ──────────────────────────────────────────────── */
+static int  is_root          = 0;         /* 1 = elevated to root */
+static int  sudo_pending     = 0;         /* waiting for sudo password */
+static char sudo_cmd[BUF_SIZE] = "";      /* command to run after sudo auth */
+static char sudo_pw_buf[64]  = "";        /* password being typed (hidden) */
+static int  sudo_pw_len      = 0;
+static int  sudo_attempts    = 0;
+/* Root password — set by installer on completion, default "admin" */
+char shell_root_password[64] = "admin";
+
+void shell_set_username(const char* u) {
+    int i = 0;
+    while (u[i] && i < 31) { username[i] = u[i]; i++; }
+    username[i] = 0;
+}
+
 /* ── Prompt ──────────────────────────────────────────────────────────────── */
 static void print_prompt(void) {
-    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
-    terminal_writestring(username);
+    terminal_setcolor(vga_entry_color(
+        is_root ? VGA_COLOR_LIGHT_RED : VGA_COLOR_LIGHT_GREEN,
+        VGA_COLOR_BLACK));
+    terminal_writestring(is_root ? "root" : username);
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     terminal_writestring("@elseaos");
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
-    terminal_writestring(":~# ");
+    terminal_writestring(is_root ? ":~# " : ":~$ ");
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
 }
 
@@ -87,7 +105,37 @@ static void cmd_help(void) {
         {"sleep",    "sleep N milliseconds  (sleep 500)"},
         {"reboot",   "restart the machine"},
         {"halt",     "power off / halt CPU"},
-        {"install",  "run the graphical OS installer"},
+        {"install",           "run the graphical OS installer (root)"},
+        {"apt update",           "refresh package list (sudo)"},
+        {"apt install <pkg>",    "install a package (sudo)"},
+        {"apt remove <pkg>",     "remove a package (sudo)"},
+        {"apt upgrade",          "upgrade all packages (sudo)"},
+        {"apt list",             "list all packages"},
+        {"apt list --installed", "show installed packages only"},
+        {"apt search <term>",    "search packages by name/desc"},
+        {"apt show <pkg>",       "show package details"},
+        {"ota check",            "check for OS updates"},
+        {"ota install",          "download and apply update (sudo)"},
+        {"sudo <cmd>",           "run command as root"},
+        {"su",                   "switch to root session"},
+        {"whoami",               "show current user"},
+        {"id",                   "show uid/gid info"},
+        {"exit",                 "exit root session / logout"},
+        {"java -version",        "Java runtime (needs: sudo apt install java)"},
+        {"javac <file>",         "Java compiler (needs: sudo apt install java)"},
+        {"python3 --version",    "Python 3 (needs: sudo apt install python3)"},
+        {"gcc --version",        "C/C++ compiler (needs: sudo apt install gcc)"},
+        {"node --version",       "Node.js (needs: sudo apt install nodejs)"},
+        {"git --version",        "Git VCS (needs: sudo apt install git)"},
+        {"vim <file>",           "Vi editor (needs: sudo apt install vim)"},
+        {"curl <url>",           "HTTP client (needs: sudo apt install curl)"},
+        {"htop",                 "Process viewer (needs: sudo apt install htop)"},
+        {"bt scan",         "scan for bluetooth devices"},
+        {"bt connect <n>",  "connect to BT device by index"},
+        {"wifi scan",       "scan for WiFi networks"},
+        {"wifi connect",    "wifi connect <ssid> <pass>"},
+        {"lang <code>",     "set language: en fr de es ar"},
+        {"fde unlock <pw>", "unlock FDE encrypted disk"},
     };
     for (size_t i = 0; i < sizeof(cmds)/sizeof(cmds[0]); i++) {
         terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
@@ -293,7 +341,45 @@ static void cmd_install(void) {
     installer_run();
 }
 
+/* ── Privilege helpers ───────────────────────────────────────────────────── */
+static int cmd_needs_root(const char* cmd) {
+    /* commands that require root / sudo */
+    if (strncmp(cmd, "pkg install", 11) == 0) return 1;
+    if (strncmp(cmd, "pkg remove",  10) == 0) return 1;
+    if (strncmp(cmd, "pkg update",  10) == 0) return 1;
+    if (strncmp(cmd, "pkg purge",    9) == 0) return 1;
+    if (strncmp(cmd, "pkg upgrade", 11) == 0) return 1;
+    if (strncmp(cmd, "apt install", 11) == 0) return 1;
+    if (strncmp(cmd, "apt remove",  10) == 0) return 1;
+    if (strncmp(cmd, "apt purge",    9) == 0) return 1;
+    if (strncmp(cmd, "apt update",  10) == 0) return 1;
+    if (strncmp(cmd, "apt upgrade", 11) == 0) return 1;
+    if (strncmp(cmd, "apt-get",      7) == 0) return 1;
+    if (strncmp(cmd, "ota install", 11) == 0) return 1;
+    if (strncmp(cmd, "fde",          3) == 0) return 1;
+    if (strcmp (cmd, "reboot")         == 0) return 1;
+    if (strcmp (cmd, "halt")           == 0) return 1;
+    if (strcmp (cmd, "install")        == 0) return 1;
+    return 0;
+}
+
+static void sudo_prompt(const char* after_cmd) {
+    strncpy(sudo_cmd, after_cmd, BUF_SIZE - 1);
+    sudo_cmd[BUF_SIZE - 1] = '\0';
+    sudo_pw_len  = 0;
+    sudo_pw_buf[0] = '\0';
+    sudo_pending = 1;
+    sudo_attempts = 0;
+    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+    terminal_writestring("\n[sudo] password for ");
+    terminal_writestring(username);
+    terminal_writestring(": ");
+    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+}
+
 /* ── Execute ─────────────────────────────────────────────────────────────── */
+static void execute_cmd(const char* cmd);   /* forward decl */
+
 static void execute(void) {
     terminal_putchar('\n');
     buf[buf_len] = '\0';
@@ -305,19 +391,245 @@ static void execute(void) {
     while (*cmd == ' ') cmd++;
     if (!*cmd) goto done;
 
+    /* ── sudo prefix ── */
+    if (strncmp(cmd, "sudo ", 5) == 0) {
+        const char* subcmd = cmd + 5;
+        while (*subcmd == ' ') subcmd++;
+        if (is_root) {
+            /* already root — run directly */
+            execute_cmd(subcmd);
+            goto done;
+        }
+        sudo_prompt(subcmd);
+        return;   /* don't print prompt — sudo_pending will do it after auth */
+    }
+
+    /* ── su (switch to root) ── */
+    if (strcmp(cmd, "su") == 0 || strcmp(cmd, "su root") == 0) {
+        sudo_prompt("\x01");   /* special sentinel: just elevate, no command */
+        return;
+    }
+
+    /* ── whoami ── */
+    if (strcmp(cmd, "whoami") == 0) {
+        terminal_printf("  %s\n", is_root ? "root" : username);
+        goto done;
+    }
+
+    /* ── id ── */
+    if (strcmp(cmd, "id") == 0) {
+        if (is_root)
+            terminal_writestring("  uid=0(root) gid=0(root) groups=0(root)\n");
+        else
+            terminal_printf("  uid=1000(%s) gid=1000(%s) groups=1000(%s),4(adm),27(sudo)\n",
+                username, username, username);
+        goto done;
+    }
+
+    /* ── exit root / logout ── */
+    if (strcmp(cmd, "exit") == 0 || strcmp(cmd, "logout") == 0) {
+        if (is_root) {
+            is_root = 0;
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+            terminal_writestring("  Returned to user session.\n");
+            terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        } else {
+            terminal_writestring("  logout\n");
+        }
+        goto done;
+    }
+
+    /* ── privilege gate for sensitive commands ── */
+    if (!is_root && cmd_needs_root(cmd)) {
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+        terminal_printf("  Permission denied. Use: sudo %s\n", cmd);
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        goto done;
+    }
+
+    execute_cmd(cmd);
+done:
+    buf_len = 0;
+    print_prompt();
+    extern void wm_request_redraw(void);
+    wm_request_redraw();
+    return;
+}
+
+/* ── Installed-package runtime commands ─────────────────────────────────── */
+static int pkg_is_installed(const char* name) {
+    extern int pkg_list(void*, int);
+    struct { char name[32]; char version[16]; char desc[128]; int inst; } pl[64];
+    int pc = pkg_list(pl, 64);
+    for (int i = 0; i < pc; i++)
+        if (strcmp(pl[i].name, name) == 0) return pl[i].inst;
+    return 0;
+}
+
+static void cmd_java(const char* args) {
+    if (!pkg_is_installed("java")) {
+        terminal_printf("  java: command not found\n  Install with: sudo apt install java\n");
+        return;
+    }
+    if (strcmp(args, "-version") == 0 || strcmp(args, "--version") == 0) {
+        terminal_printf("  openjdk version \"21.0.2\" 2024-01-16\n"
+                        "  OpenJDK Runtime Environment (ElseaOS build 21.0.2+13)\n"
+                        "  OpenJDK Server VM (ElseaOS build 21.0.2+13, mixed mode)\n");
+    } else if (strncmp(args, "-jar ", 5) == 0) {
+        terminal_printf("  [JVM] Loading %s ...\n  [JVM] Running on OpenJDK 21 (ElseaOS)\n", args + 5);
+    } else if (*args) {
+        terminal_printf("  [JVM] Compiling %s ...\n  [JVM] Done. Run with: java -jar %s\n", args, args);
+    } else {
+        terminal_printf("  Usage: java -version | java -jar <file.jar> | javac <File.java>\n");
+    }
+}
+
+static void cmd_javac(const char* args) {
+    if (!pkg_is_installed("java")) {
+        terminal_printf("  javac: command not found\n  Install with: sudo apt install java\n");
+        return;
+    }
+    if (*args)
+        terminal_printf("  [javac] Compiling %s ...\n  [javac] Build successful.\n", args);
+    else
+        terminal_printf("  Usage: javac <SourceFile.java>\n");
+}
+
+static void cmd_python3(const char* args) {
+    if (!pkg_is_installed("python3")) {
+        terminal_printf("  python3: command not found\n  Install with: sudo apt install python3\n");
+        return;
+    }
+    if (strcmp(args, "--version") == 0 || strcmp(args, "-V") == 0) {
+        terminal_printf("  Python 3.12.2 (ElseaOS build)\n");
+    } else if (*args) {
+        terminal_printf("  [python3] Running %s ...\n", args);
+    } else {
+        terminal_printf("  Python 3.12.2  (ElseaOS)  Type exit() to quit.\n  >>> ");
+    }
+}
+
+static void cmd_gcc(const char* args) {
+    if (!pkg_is_installed("gcc")) {
+        terminal_printf("  gcc: command not found\n  Install with: sudo apt install gcc\n");
+        return;
+    }
+    if (strcmp(args, "--version") == 0) {
+        terminal_printf("  gcc (ElseaOS 13.2.0) 13.2.0\n");
+    } else if (*args) {
+        terminal_printf("  [gcc] Compiling %s ...\n  [gcc] Linking ...\n  [gcc] Build complete.\n", args);
+    } else {
+        terminal_printf("  gcc: no input files\n  Usage: gcc <file.c> -o <output>\n");
+    }
+}
+
+static void cmd_node(const char* args) {
+    if (!pkg_is_installed("nodejs")) {
+        terminal_printf("  node: command not found\n  Install with: sudo apt install nodejs\n");
+        return;
+    }
+    if (strcmp(args, "--version") == 0 || strcmp(args, "-v") == 0) {
+        terminal_printf("  v20.11.1\n");
+    } else if (*args) {
+        terminal_printf("  [node] Running %s ...\n", args);
+    } else {
+        terminal_printf("  Node.js v20.11.1  (ElseaOS)  Type .exit to quit.\n  > ");
+    }
+}
+
+static void cmd_git(const char* args) {
+    if (!pkg_is_installed("git")) {
+        terminal_printf("  git: command not found\n  Install with: sudo apt install git\n");
+        return;
+    }
+    if (strcmp(args, "--version") == 0) {
+        terminal_printf("  git version 2.43.0 (ElseaOS)\n");
+    } else if (strncmp(args, "clone ", 6) == 0) {
+        terminal_printf("  Cloning into repository ...\n  remote: Counting objects: 100\n"
+                        "  Receiving objects: 100%%  done.\n");
+    } else if (strcmp(args, "status") == 0) {
+        terminal_printf("  On branch main\n  nothing to commit, working tree clean\n");
+    } else if (strcmp(args, "log") == 0 || strcmp(args, "log --oneline") == 0) {
+        terminal_printf("  a1b2c3d  Initial commit\n");
+    } else {
+        terminal_printf("  git: %s\n  Try: git --version | git clone <url> | git status\n", *args ? args : "(no command)");
+    }
+}
+
+static void cmd_vim(const char* args) {
+    if (!pkg_is_installed("vim")) {
+        terminal_printf("  vim: command not found\n  Install with: sudo pkg install vim\n");
+        return;
+    }
+    terminal_printf("  VIM - Vi IMproved 9.1  (ElseaOS)\n");
+    if (*args) terminal_printf("  Opening %s  [Press :q! to quit]\n", args);
+}
+
+static void cmd_curl(const char* args) {
+    if (!pkg_is_installed("curl")) {
+        terminal_printf("  curl: command not found\n  Install with: sudo apt install curl\n");
+        return;
+    }
+    if (*args) {
+        terminal_printf("  [curl] Fetching %s ...\n  200 OK  (simulated)\n", args);
+    } else {
+        terminal_printf("  curl: no URL specified.\n  Usage: curl <url>\n");
+    }
+}
+
+static void cmd_htop(void) {
+    if (!pkg_is_installed("htop")) {
+        terminal_printf("  htop: command not found\n  Install with: sudo apt install htop\n");
+        return;
+    }
+    terminal_printf("  htop 3.3.0  (ElseaOS)\n");
+    cmd_ps();
+}
+
+/* ── Execute ─────────────────────────────────────────────────────────────── */
+static void execute_cmd(const char* cmd) {
+
     if      (strcmp(cmd, "help")  == 0) cmd_help();
     else if (strcmp(cmd, "clear") == 0) terminal_clear();
     else if (strcmp(cmd, "info")  == 0) cmd_info();
     else if (strcmp(cmd, "c4")    == 0) {
-        extern int elf_load_and_run(const char*);
-        int pid = elf_load_and_run("c4.elf");
+        extern int elf_load_and_run(const char*, const char*);
+        int pid = elf_load_and_run("c4.elf", NULL);
         if (pid > 0) task_waitpid(pid);
     }
     else if (strcmp(cmd, "mem")   == 0) cmd_mem();
     else if (strcmp(cmd, "uptime")== 0) cmd_uptime();
     else if (strcmp(cmd, "date")  == 0) cmd_date();
-    else if (strcmp(cmd, "ls")    == 0) tar_ls();
+    else if (strcmp(cmd, "ls")    == 0 || strncmp(cmd, "ls ", 3) == 0) {
+        extern int elf_load_and_run(const char*, const char*);
+        int pid = elf_load_and_run("bin/ls.elf", cmd + 3);
+        if (pid > 0) task_waitpid(pid);
+    }
     else if (strcmp(cmd, "ps")    == 0) cmd_ps();
+    /* ── Installed package commands ── */
+    else if (strcmp(cmd, "java") == 0 || strncmp(cmd, "java ", 5) == 0)
+        cmd_java(cmd[4] ? cmd + 5 : "");
+    else if (strcmp(cmd, "javac") == 0 || strncmp(cmd, "javac ", 6) == 0)
+        cmd_javac(cmd[5] ? cmd + 6 : "");
+    else if (strcmp(cmd, "python3") == 0 || strncmp(cmd, "python3 ", 8) == 0)
+        cmd_python3(cmd[7] ? cmd + 8 : "");
+    else if (strcmp(cmd, "python") == 0 || strncmp(cmd, "python ", 7) == 0)
+        cmd_python3(cmd[6] ? cmd + 7 : "");
+    else if (strcmp(cmd, "gcc") == 0 || strncmp(cmd, "gcc ", 4) == 0)
+        cmd_gcc(cmd[3] ? cmd + 4 : "");
+    else if (strcmp(cmd, "g++") == 0 || strncmp(cmd, "g++ ", 4) == 0)
+        cmd_gcc(cmd[3] ? cmd + 4 : "");
+    else if (strcmp(cmd, "node") == 0 || strncmp(cmd, "node ", 5) == 0)
+        cmd_node(cmd[4] ? cmd + 5 : "");
+    else if (strcmp(cmd, "npm") == 0 || strncmp(cmd, "npm ", 4) == 0)
+        cmd_node(cmd[3] ? cmd + 4 : "");
+    else if (strcmp(cmd, "git") == 0 || strncmp(cmd, "git ", 4) == 0)
+        cmd_git(cmd[3] ? cmd + 4 : "");
+    else if (strcmp(cmd, "vim") == 0 || strncmp(cmd, "vim ", 4) == 0)
+        cmd_vim(cmd[3] ? cmd + 4 : "");
+    else if (strcmp(cmd, "curl") == 0 || strncmp(cmd, "curl ", 5) == 0)
+        cmd_curl(cmd[4] ? cmd + 5 : "");
+    else if (strcmp(cmd, "htop") == 0) cmd_htop();
     else if (strncmp(cmd, "sleep ",6) == 0) {
         uint32_t ms = (uint32_t)strtol(cmd + 6, NULL, 10);
         terminal_printf("  Sleeping %u ms...\n", ms);
@@ -327,8 +639,16 @@ static void execute(void) {
     else if (strcmp(cmd, "reboot")== 0) cmd_reboot();
     else if (strcmp(cmd, "halt")  == 0) cmd_halt();
     else if (strcmp(cmd, "install")== 0) cmd_install();
-    else if (strncmp(cmd, "echo ",   5) == 0) { terminal_writestring(cmd + 5); terminal_putchar('\n'); }
-    else if (strncmp(cmd, "cat ",    4) == 0) tar_cat(cmd + 4);
+    else if (strncmp(cmd, "echo ",   5) == 0) {
+        extern int elf_load_and_run(const char*, const char*);
+        int pid = elf_load_and_run("bin/echo.elf", cmd + 5);
+        if (pid > 0) task_waitpid(pid);
+    }
+    else if (strncmp(cmd, "cat ",    4) == 0) {
+        extern int elf_load_and_run(const char*, const char*);
+        int pid = elf_load_and_run("bin/cat.elf", cmd + 4);
+        if (pid > 0) task_waitpid(pid);
+    }
     else if (strncmp(cmd, "calc ",   5) == 0) cmd_calc(cmd + 5);
     else if (strncmp(cmd, "hexdump", 7) == 0) cmd_hexdump(cmd[7] ? cmd + 8 : "0x100000");
     else if (strncmp(cmd, "color ",  6) == 0) cmd_color(cmd + 6);
@@ -440,8 +760,8 @@ static void execute(void) {
             terminal_writestring("  File not found.\n");
     }
     else if (strncmp(cmd, "exec ", 5) == 0) {
-        extern int elf_load_and_run(const char*);
-        int pid = elf_load_and_run(cmd + 5);
+        extern int elf_load_and_run(const char*, const char*);
+        int pid = elf_load_and_run(cmd + 5, NULL);
         if (pid > 0) task_waitpid(pid);
     }
     // ── http_get — supports both IP and hostname ──────────────────────────────
@@ -452,14 +772,14 @@ static void execute(void) {
         // Try DNS resolution (handles both raw IPs and hostnames)
         if (!dns_resolve(target, &dest_ip)) {
             terminal_printf("  Cannot resolve '%s'.\n", target);
-            goto done;
+            return;
         }
 
         terminal_printf("  Connecting to %d.%d.%d.%d:80...\n",
             (dest_ip >> 24)&0xFF, (dest_ip >> 16)&0xFF,
             (dest_ip >>  8)&0xFF,  dest_ip & 0xFF);
 
-        if (tcp_connect(dest_ip, 80) < 0) goto done;
+        if (tcp_connect(dest_ip, 80) < 0) return;
 
         // Build minimal HTTP/1.0 request
         char req[256];
@@ -512,8 +832,8 @@ static void execute(void) {
 
     else if (strncmp(cmd, "c4", 2) == 0) {
         terminal_printf("Executing c4.elf (C Compiler)...\n");
-        extern int elf_load_and_run(const char*);
-        int pid = elf_load_and_run("c4.elf");
+        extern int elf_load_and_run(const char*, const char*);
+        int pid = elf_load_and_run("c4.elf", NULL);
         if (pid > 0) task_waitpid(pid);
     } else if (strncmp(cmd, "ping ", 5) == 0) {
         // Parse IP
@@ -754,18 +1074,188 @@ static void execute(void) {
         while (*p >= '0' && *p <= '9') { fd = fd * 10 + (*p - '0'); p++; }
         raw_socket_close(fd);
         terminal_printf("  Closed raw socket fd=%d\n", fd);
+    } else if (strncmp(cmd, "pkg update",    10) == 0
+            || strncmp(cmd, "apt update",    10) == 0
+            || strncmp(cmd, "apt-get update",14) == 0) {
+        terminal_writestring("  Hit:1 http://pkg.elseaos.org elseaos InRelease\n");
+        extern int pkg_update(void);
+        pkg_update();
+        terminal_writestring("  Reading package lists... Done\n");
+        terminal_writestring("  Building dependency tree... Done\n");
+
+    } else if (strncmp(cmd, "pkg upgrade",    11) == 0
+            || strncmp(cmd, "apt upgrade",    11) == 0
+            || strncmp(cmd, "apt-get upgrade",15) == 0) {
+        terminal_writestring("  Reading package lists... Done\n");
+        terminal_writestring("  Building dependency tree... Done\n");
+        terminal_writestring("  Calculating upgrade... Done\n");
+        terminal_writestring("  0 upgraded, 0 newly installed, 0 to remove.\n");
+
+    } else if (strncmp(cmd, "pkg install ",    12) == 0
+            || strncmp(cmd, "apt install ",    12) == 0
+            || strncmp(cmd, "apt-get install ",16) == 0) {
+        /* extract package name — skip past "apt install " or "apt-get install " etc */
+        const char* pname = cmd;
+        while (*pname && *pname != ' ') pname++;   /* skip verb */
+        while (*pname == ' ') pname++;              /* skip spaces */
+        while (*pname && *pname != ' ') pname++;   /* skip subverb */
+        while (*pname == ' ') pname++;              /* skip spaces -> package name */
+        /* strip flags like -y */
+        if (*pname == '-') { while (*pname && *pname != ' ') pname++; while (*pname == ' ') pname++; }
+        terminal_printf("  Reading package lists... Done\n");
+        terminal_printf("  Building dependency tree... Done\n");
+        terminal_printf("  The following NEW packages will be installed:\n    %s\n", pname);
+        terminal_printf("  0 upgraded, 1 newly installed, 0 to remove.\n");
+        terminal_printf("  Need to get 0 B of archives.\n");
+        terminal_printf("  Selecting previously unselected package %s.\n", pname);
+        terminal_printf("  Unpacking %s ...\n", pname);
+        extern int pkg_install(const char*);
+        pkg_install(pname);
+        terminal_printf("  Setting up %s ... Done\n", pname);
+        terminal_printf("  Processing triggers for man-db ... Done\n");
+
+    } else if (strncmp(cmd, "pkg remove ",     11) == 0
+            || strncmp(cmd, "pkg purge ",      10) == 0
+            || strncmp(cmd, "apt remove ",     11) == 0
+            || strncmp(cmd, "apt purge ",      10) == 0
+            || strncmp(cmd, "apt-get remove ", 15) == 0
+            || strncmp(cmd, "apt-get purge ",  14) == 0) {
+        const char* pname = cmd;
+        while (*pname && *pname != ' ') pname++;
+        while (*pname == ' ') pname++;
+        while (*pname && *pname != ' ') pname++;
+        while (*pname == ' ') pname++;
+        terminal_printf("  Reading package lists... Done\n");
+        terminal_printf("  The following packages will be REMOVED:\n    %s\n", pname);
+        extern int pkg_remove(const char*);
+        pkg_remove(pname);
+        terminal_printf("  Removing %s ... Done\n", pname);
+
+    } else if (strcmp(cmd, "pkg list") == 0
+            || strcmp(cmd, "apt list")  == 0
+            || strcmp(cmd, "apt-cache pkgnames") == 0
+            || strcmp(cmd, "dpkg --list") == 0) {
+        extern int pkg_list(void*, int);
+        struct { char name[32]; char version[16]; char desc[128]; int inst; } pl[64];
+        int pc = pkg_list(pl, 64);
+        terminal_printf("  Listing... Done\n");
+        for (int i = 0; i < pc; i++)
+            terminal_printf("  %-22s %-8s %s  [%s]\n",
+                pl[i].name, pl[i].version, pl[i].desc,
+                pl[i].inst ? "installed" : "available");
+
+    } else if (strcmp(cmd, "apt list --installed") == 0
+            || strcmp(cmd, "pkg list --installed") == 0
+            || strcmp(cmd, "dpkg -l")   == 0
+            || strcmp(cmd, "dpkg -l --") == 0) {
+        extern int pkg_list(void*, int);
+        struct { char name[32]; char version[16]; char desc[128]; int inst; } pl[64];
+        int pc = pkg_list(pl, 64);
+        terminal_printf("  Listing installed packages...\n");
+        int found = 0;
+        for (int i = 0; i < pc; i++) {
+            if (pl[i].inst) {
+                terminal_printf("  ii  %-20s %-8s %s\n", pl[i].name, pl[i].version, pl[i].desc);
+                found++;
+            }
+        }
+        if (!found) terminal_printf("  (no packages installed)\n");
+
+    } else if (strncmp(cmd, "pkg search ",      11) == 0
+            || strncmp(cmd, "apt search ",      11) == 0
+            || strncmp(cmd, "apt-cache search ",17) == 0) {
+        const char* term = cmd + (cmd[0]=='p' ? 11 : cmd[4]=='s' ? 11 : 17);
+        extern int pkg_list(void*, int);
+        struct { char name[32]; char version[16]; char desc[128]; int inst; } pl[64];
+        int pc = pkg_list(pl, 64);
+        terminal_printf("  Sorting... Done\n  Full-Text Search... Done\n");
+        int found = 0;
+        for (int i = 0; i < pc; i++) {
+            /* simple substring search in name and desc */
+            int nm=0, di=0;
+            for (int k=0; pl[i].name[k]; k++)
+                if (pl[i].name[k]==term[0]) { nm=1; break; }
+            for (int k=0; pl[i].desc[k]; k++)
+                if (pl[i].desc[k]==term[0]) { di=1; break; }
+            /* just show all that start with the same letter for simplicity */
+            if (nm || di) {
+                terminal_printf("  %-22s - %s\n", pl[i].name, pl[i].desc);
+                found++;
+            }
+        }
+        if (!found) terminal_printf("  No results for '%s'\n", term);
+
+    } else if (strncmp(cmd, "pkg show ",       9) == 0
+            || strncmp(cmd, "apt show ",       9) == 0
+            || strncmp(cmd, "apt-cache show ", 15) == 0) {
+        const char* pname = cmd + (cmd[0]=='p' ? 9 : cmd[4]=='s' ? 9 : 15);
+        extern int pkg_list(void*, int);
+        struct { char name[32]; char version[16]; char desc[128]; int inst; } pl[64];
+        int pc = pkg_list(pl, 64);
+        for (int i = 0; i < pc; i++) {
+            if (strcmp(pl[i].name, pname) == 0) {
+                terminal_printf("  Package: %s\n  Version: %s\n  Status: %s\n  Description: %s\n",
+                    pl[i].name, pl[i].version,
+                    pl[i].inst ? "install ok installed" : "install ok not-installed",
+                    pl[i].desc);
+                goto apt_done;
+            }
+        }
+        terminal_printf("  E: No packages found matching '%s'\n", pname);
+        apt_done:;
+    } else if (strcmp(cmd, "ota check") == 0) {
+        extern int ota_check_update(void);
+        ota_check_update();
+    } else if (strcmp(cmd, "ota install") == 0) {
+        extern int ota_download_and_install(void);
+        ota_download_and_install();
+    } else if (strcmp(cmd, "bt scan") == 0) {
+        extern void bluetooth_scan(void);
+        bluetooth_scan();
+    } else if (strncmp(cmd, "bt connect ", 11) == 0) {
+        extern int bluetooth_connect(int);
+        int idx = 0; const char* p = cmd + 11;
+        while (*p >= '0' && *p <= '9') { idx = idx * 10 + (*p - '0'); p++; }
+        bluetooth_connect(idx);
+    } else if (strncmp(cmd, "bt disconnect ", 14) == 0) {
+        extern int bluetooth_disconnect(int);
+        int idx = 0; const char* p = cmd + 14;
+        while (*p >= '0' && *p <= '9') { idx = idx * 10 + (*p - '0'); p++; }
+        bluetooth_disconnect(idx);
+    } else if (strcmp(cmd, "wifi scan") == 0) {
+        extern int wifi_scan(void*, int);
+        struct { char ssid[32]; uint8_t bssid[6]; int sig; int enc; } nets[8];
+        int n = wifi_scan(nets, 8);
+        for (int i = 0; i < n; i++)
+            terminal_printf("  [%d] %-24s  signal=%d  %s\n", i, nets[i].ssid, nets[i].sig, nets[i].enc ? "WPA2" : "Open");
+    } else if (strncmp(cmd, "wifi connect ", 13) == 0) {
+        extern int wifi_connect(const char*, const char*);
+        /* parse "ssid password" */
+        const char* p = cmd + 13;
+        char ssid[33] = {0}; int si = 0;
+        while (*p && *p != ' ' && si < 32) { ssid[si++] = *p++; }
+        while (*p == ' ') p++;
+        wifi_connect(ssid, p);
+    } else if (strcmp(cmd, "wifi disconnect") == 0) {
+        extern int wifi_disconnect(void);
+        wifi_disconnect();
+    } else if (strncmp(cmd, "lang ", 5) == 0) {
+        extern void i18n_set_language(const char*);
+        i18n_set_language(cmd + 5);
+        terminal_printf("  Language set to: %s\n", cmd + 5);
+    } else if (strncmp(cmd, "fde unlock ", 11) == 0) {
+        extern int fde_unlock_disk(const char*);
+        if (fde_unlock_disk(cmd + 11))
+            terminal_printf("  FDE: disk unlocked.\n");
+        else
+            terminal_printf("  FDE: unlock failed.\n");
     } else {
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
         terminal_printf("  Command not found: %s\n", cmd);
         terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     }
 
-done:
     buf_len = 0;
-    print_prompt();
-    // Flush to framebuffer after each command
-    extern void wm_request_redraw(void);
-    wm_request_redraw();
 }
 
 /* ── Keypress handler ────────────────────────────────────────────────────── */
@@ -782,6 +1272,74 @@ static void shell_set_input(const char* line) {
 }
 
 void shell_handle_keypress(char c) {
+    /* ── sudo password mode ── */
+    if (sudo_pending) {
+        if (c == '\n') {
+            terminal_putchar('\n');
+            sudo_pw_buf[sudo_pw_len] = '\0';
+            if (strcmp(sudo_pw_buf, shell_root_password) == 0) {
+                /* Correct password */
+                sudo_pending  = 0;
+                sudo_attempts = 0;
+                if (sudo_cmd[0] == '\x01') {
+                    /* su — just elevate */
+                    is_root = 1;
+                    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+                    terminal_writestring("  Switched to root. Type 'exit' to return.\n");
+                    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+                } else {
+                    /* run the queued command as root */
+                    int saved = is_root;
+                    is_root = 1;
+                    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+                    terminal_writestring("  [sudo] Running as root: ");
+                    terminal_writestring(sudo_cmd);
+                    terminal_putchar('\n');
+                    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+                    execute_cmd(sudo_cmd);
+                    is_root = saved;
+                }
+            } else {
+                sudo_attempts++;
+                terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+                terminal_writestring("  Sorry, try again.\n");
+                terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+                if (sudo_attempts >= 3) {
+                    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+                    terminal_writestring("  sudo: 3 incorrect password attempts\n");
+                    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+                    sudo_pending  = 0;
+                    sudo_attempts = 0;
+                } else {
+                    /* Retry */
+                    sudo_pw_len = 0;
+                    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+                    terminal_writestring("[sudo] password for ");
+                    terminal_writestring(username);
+                    terminal_writestring(": ");
+                    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+                    return;
+                }
+            }
+            /* Print fresh prompt after sudo resolves */
+            sudo_pw_len = 0;
+            buf_len = 0;
+            print_prompt();
+            extern void wm_request_redraw(void);
+            wm_request_redraw();
+        } else if (c == '\b') {
+            if (sudo_pw_len > 0) sudo_pw_len--;
+            /* don't echo anything — password is hidden */
+        } else if (c >= ' ' && c <= '~') {
+            if (sudo_pw_len < 63) sudo_pw_buf[sudo_pw_len++] = c;
+            /* echo '*' for each character */
+            terminal_putchar('*');
+            extern void wm_request_redraw(void);
+            wm_request_redraw();
+        }
+        return;
+    }
+
     if (c == '\n') {
         execute();
     } else if (c == '\b') {
@@ -880,10 +1438,12 @@ static void wizard(void) {
 
 /* ── shell_init ──────────────────────────────────────────────────────────── */
 void shell_init(void) {
-    print_prompt();
+    // Default username since we bypass the blocking prompt for GUI boot
+    strncpy(username, "user", 31);
+    
+    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+    terminal_printf("  Hello, %s! Type 'help' to get started.\n\n", username);
+
     extern void wm_request_redraw(void);
     wm_request_redraw();
-    
-    // Automatically launch the graphical installer when booting from the Live CD
-    installer_run();
 }

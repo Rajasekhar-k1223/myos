@@ -45,6 +45,15 @@ typedef struct {
     uint8_t  s_volume_name[16];
     uint8_t  s_last_mounted[64];
     uint32_t s_algo_bitmap;
+
+    /* EXT3/4 prealloc and journaling */
+    uint8_t  s_prealloc_blocks;
+    uint8_t  s_prealloc_dir_blocks;
+    uint16_t s_padding1;
+    uint8_t  s_journal_uuid[16];
+    uint32_t s_journal_inum;
+    uint32_t s_journal_dev;
+    uint32_t s_last_orphan;
 } __attribute__((packed)) ext2_superblock_t;
 
 typedef struct {
@@ -105,11 +114,19 @@ typedef struct {
 #define EXT2_FT_SYMLINK  7
 
 void ext2_init(void);
+int  ext2_is_mounted(void);
 int  ext2_ls(char names[][13], int max_entries);
 int  ext2_read_file(const char* name, uint8_t* buf, uint32_t max_len);
 int  ext2_write_file(const char* name, const uint8_t* buf, uint32_t len);
 int  ext2_create_file(const char* name, const uint8_t* buf, uint32_t len);
 int  ext2_chmod(const char* name, uint16_t mode);
 int  ext2_chown(const char* name, uint16_t uid, uint16_t gid);
+
+/* Journal API */
+void ext2_journal_init(void);
+void ext2_journal_replay(void);
+int  ext2_journal_start_transaction(void);
+int  ext2_journal_commit_transaction(void);
+void ext2_journal_log_block(uint32_t block_no, const uint8_t* data);
 
 #endif

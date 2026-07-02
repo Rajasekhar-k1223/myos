@@ -67,11 +67,61 @@ void ext2_init(void) {
     mounted = 1;
     terminal_printf("[EXT2] Mounted — block_size=%u inodes=%u blocks=%u groups=%u\n",
                     block_size, sb->s_inodes_count, sb->s_blocks_count, bgd_count);
+
+    /* Initialize journal state and replay any uncommitted transactions */
+    ext2_journal_init();
+    ext2_journal_replay();
 }
 
 int ext2_is_mounted(void) { return mounted; }
 
-static int has_journal = 0;
+/* Forward declarations for internal helpers used by journal code */
+static int ext2_read_inode(uint32_t ino, ext2_inode_t* out);
+
+/* ── JBD2 definitions ──────────────────────────────────────────────────── */
+#define JBD2_MAGIC          0xC03B3998u
+#define JBD2_DESCRIPTOR_BLOCK  1
+#define JBD2_COMMIT_BLOCK      2
+#define JBD2_SUPERBLOCK_V1     3
+#define JBD2_SUPERBLOCK_V2     4
+#define JBD2_REVOKE_BLOCK      5
+
+/* JBD2 tag flag: last entry in descriptor block */
+#define JBD2_FLAG_LAST_TAG  0x8
+
+typedef struct {
+    uint32_t h_magic;
+    uint32_t h_blocktype;
+    uint32_t h_sequence;
+} __attribute__((packed)) jbd2_header_t;
+
+typedef struct {
+    jbd2_header_t s_header;
+    uint32_t s_blocksize;
+    uint32_t s_maxlen;
+    uint32_t s_first;
+    uint32_t s_sequence;
+    uint32_t s_start;
+} __attribute__((packed)) jbd2_sb_t;
+
+typedef struct {
+    uint32_t t_blocknr;
+    uint32_t t_flags;
+} __attribute__((packed)) jbd2_tag_t;
+
+/* Byte-swap helpers (JBD2 is big-endian on disk) */
+static uint32_t be32(uint32_t x) {
+    return ((x & 0xFF000000u) >> 24) |
+           ((x & 0x00FF0000u) >>  8) |
+           ((x & 0x0000FF00u) <<  8) |
+           ((x & 0x000000FFu) << 24);
+}
+
+/* ── Journal state ─────────────────────────────────────────────────────── */
+static int      has_journal  = 0;
+/* Journal inode block pointers (direct blocks only for now: up to 12) */
+static uint32_t j_blocks[12];
+static uint32_t j_nblocks = 0;
 
 void ext2_journal_init(void) {
     if (!mounted) return;
@@ -83,14 +133,170 @@ void ext2_journal_init(void) {
     }
 }
 
+/* ── Journal replay (JBD2) ─────────────────────────────────────────────── */
+void ext2_journal_replay(void) {
+    if (!mounted || !has_journal) return;
+
+    uint32_t jino = sb->s_journal_inum;
+    if (jino == 0) jino = 8; /* EXT3 default journal inode */
+
+    ext2_inode_t jinode;
+    if (!ext2_read_inode(jino, &jinode)) {
+        terminal_printf("[EXT2] Could not read journal inode %u.\n", jino);
+        return;
+    }
+
+    /* Collect journal block numbers from direct block pointers */
+    j_nblocks = 0;
+    for (int i = 0; i < 12; i++) {
+        if (jinode.i_block[i] == 0) break;
+        j_blocks[j_nblocks++] = jinode.i_block[i];
+    }
+    if (j_nblocks == 0) {
+        terminal_printf("[EXT2] Journal inode has no blocks.\n");
+        return;
+    }
+
+    /* Read journal block 0 to find the JBD2 superblock */
+    uint8_t* jblk = (uint8_t*)kmalloc(block_size);
+    if (!jblk) return;
+
+    if (!ext2_read_block(j_blocks[0], jblk)) {
+        terminal_printf("[EXT2] Could not read journal block 0.\n");
+        kfree(jblk);
+        return;
+    }
+
+    jbd2_sb_t* jsb = (jbd2_sb_t*)jblk;
+    if (be32(jsb->s_header.h_magic) != JBD2_MAGIC) {
+        terminal_printf("[EXT2] Journal clean, no replay needed.\n");
+        kfree(jblk);
+        return;
+    }
+
+    uint32_t j_start    = be32(jsb->s_start);
+    uint32_t j_maxlen   = be32(jsb->s_maxlen);
+    uint32_t j_seq      = be32(jsb->s_sequence);
+
+    terminal_printf("[EXT2] JBD2 journal found, replaying... (start=%u maxlen=%u seq=%u)\n",
+                    j_start, j_maxlen, j_seq);
+
+    if (j_start == 0) {
+        /* Journal is clean: s_start == 0 means no outstanding transactions */
+        terminal_printf("[EXT2] Journal clean, no replay needed.\n");
+        kfree(jblk);
+        return;
+    }
+
+    int recovered = 0;
+    uint8_t* dblk = (uint8_t*)kmalloc(block_size);
+    if (!dblk) { kfree(jblk); return; }
+
+    /* Walk journal blocks starting at j_start */
+    uint32_t pos = j_start;
+    uint32_t cur_seq = j_seq;
+    int max_iter = (int)j_maxlen + 1; /* safety cap */
+
+    while (max_iter-- > 0) {
+        if (pos >= j_nblocks) break; /* beyond our direct blocks */
+
+        if (!ext2_read_block(j_blocks[pos], jblk)) break;
+
+        jbd2_header_t* hdr = (jbd2_header_t*)jblk;
+        if (be32(hdr->h_magic) != JBD2_MAGIC) break; /* end of valid journal data */
+
+        uint32_t btype = be32(hdr->h_blocktype);
+        uint32_t bseq  = be32(hdr->h_sequence);
+
+        if (bseq != cur_seq) break; /* sequence mismatch — stop */
+
+        if (btype == JBD2_DESCRIPTOR_BLOCK) {
+            /* Descriptor block: parse tags and apply data blocks that follow */
+            uint32_t tag_off = sizeof(jbd2_header_t);
+            uint32_t data_pos = pos + 1;
+            int done = 0;
+
+            while (!done && tag_off + sizeof(jbd2_tag_t) <= block_size) {
+                jbd2_tag_t* tag = (jbd2_tag_t*)(jblk + tag_off);
+                uint32_t fs_block = be32(tag->t_blocknr);
+                uint32_t flags    = be32(tag->t_flags);
+
+                /* Read the data block and write it to the real filesystem */
+                if (data_pos < j_nblocks) {
+                    if (ext2_read_block(j_blocks[data_pos], dblk)) {
+                        ext2_write_block(fs_block, dblk);
+                        recovered++;
+                    }
+                    data_pos++;
+                }
+
+                if (flags & JBD2_FLAG_LAST_TAG) done = 1;
+                tag_off += sizeof(jbd2_tag_t);
+            }
+
+            pos = data_pos; /* advance past all data blocks */
+
+        } else if (btype == JBD2_COMMIT_BLOCK) {
+            /* Committed — advance sequence and continue */
+            cur_seq++;
+            pos++;
+
+        } else if (btype == JBD2_REVOKE_BLOCK) {
+            /* Revoke block — skip (blocks listed here should NOT be replayed) */
+            pos++;
+
+        } else {
+            /* Unknown block type — stop */
+            break;
+        }
+    }
+
+    kfree(dblk);
+    kfree(jblk);
+    terminal_printf("[EXT2] Journal replay complete: %d blocks recovered.\n", recovered);
+}
+
+/* ── Transaction log buffer ────────────────────────────────────────────── */
+#define JOURNAL_MAX_DIRTY 16
+static uint32_t j_dirty_blocks[JOURNAL_MAX_DIRTY];
+static uint8_t* j_dirty_data[JOURNAL_MAX_DIRTY];
+static int      j_dirty_count   = 0;
+static int      j_in_transaction = 0;
+
 int ext2_journal_start_transaction(void) {
     if (!has_journal) return 0;
-    return 1; // stub
+    /* Free any leftover buffers from a previous abandoned transaction */
+    for (int i = 0; i < j_dirty_count; i++) {
+        if (j_dirty_data[i]) { kfree(j_dirty_data[i]); j_dirty_data[i] = 0; }
+    }
+    j_dirty_count = 0;
+    j_in_transaction = 1;
+    return 1;
 }
 
 int ext2_journal_commit_transaction(void) {
-    if (!has_journal) return 0;
-    return 1; // stub
+    if (!has_journal || !j_in_transaction) return 0;
+    for (int i = 0; i < j_dirty_count; i++) {
+        if (j_dirty_data[i]) {
+            ext2_write_block(j_dirty_blocks[i], j_dirty_data[i]);
+            kfree(j_dirty_data[i]);
+            j_dirty_data[i] = 0;
+        }
+    }
+    j_dirty_count = 0;
+    j_in_transaction = 0;
+    return 1;
+}
+
+void ext2_journal_log_block(uint32_t block_no, const uint8_t* data) {
+    if (!j_in_transaction || j_dirty_count >= JOURNAL_MAX_DIRTY) return;
+    uint32_t bsz = block_size ? block_size : 1024;
+    uint8_t* copy = (uint8_t*)kmalloc(bsz);
+    if (!copy) return;
+    memcpy(copy, data, bsz);
+    j_dirty_blocks[j_dirty_count] = block_no;
+    j_dirty_data[j_dirty_count]   = copy;
+    j_dirty_count++;
 }
 /* Read inode number `ino` (1-based) into `out` */
 static int ext2_read_inode(uint32_t ino, ext2_inode_t* out) {

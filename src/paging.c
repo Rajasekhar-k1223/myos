@@ -7,7 +7,6 @@
 
 // 1024 entries * 4 bytes = 4096 bytes (1 frame)
 uint32_t* kernel_page_directory;
-uint32_t* current_page_directory;
 
 /* COW reference counts — indexed by physical frame number (phys >> 12) */
 static uint8_t cow_refs[1024 * 1024];
@@ -28,25 +27,42 @@ int cow_count(uint32_t phys_addr) {
 }
 
 
+uint32_t* paging_get_current_dir(void) {
+    uint32_t cr0;
+    asm volatile("mov %%cr0, %0" : "=r"(cr0));
+    if (!(cr0 & 0x80000000)) return kernel_page_directory;
+    uint32_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    return (uint32_t*)(cr3 & ~0xFFF);
+}
+
 void paging_map_page(uint32_t virt, uint32_t phys, uint32_t flags) {
     uint32_t pdindex = virt >> 22;
     uint32_t ptindex = virt >> 12 & 0x03FF;
+    uint32_t* dir = paging_get_current_dir();
 
-    if (!(current_page_directory[pdindex] & 1)) {
+    if (!(dir[pdindex] & 1)) {
         // Page table not present, allocate one
         uint32_t* pt = (uint32_t*)pmm_alloc_frame();
         memset(pt, 0, 4096);
-        current_page_directory[pdindex] = (uint32_t)pt | 7; // Present, Read/Write, User
+        dir[pdindex] = (uint32_t)pt | 7; // Present, Read/Write, User
+    } else if ((flags & 4) && !(dir[pdindex] & 4)) {
+        /* User-mode mapping into a supervisor-only PDE.
+         * We must NOT modify the kernel's shared page table in-place.
+         * Instead, create a private copy of the kernel PT entries and use that. */
+        uint32_t* old_pt = (uint32_t*)(dir[pdindex] & ~0xFFF);
+        uint32_t* new_pt = (uint32_t*)pmm_alloc_frame();
+        memcpy(new_pt, old_pt, 4096);           /* copy kernel mappings */
+        dir[pdindex] = (uint32_t)new_pt | 7;   /* user-accessible, R/W */
     }
 
-    uint32_t* pt = (uint32_t*)(current_page_directory[pdindex] & ~0xFFF);
+    uint32_t* pt = (uint32_t*)(dir[pdindex] & ~0xFFF);
     pt[ptindex] = phys | (flags & 0xFFF) | 1; // Present
 }
 
 void paging_init(void) {
     kernel_page_directory = (uint32_t*)pmm_alloc_frame();
     memset(kernel_page_directory, 0, 4096);
-    current_page_directory = kernel_page_directory;
 
     /* Identity map the first 256 MB of memory (kernel + DMA buffers) */
     for (uint32_t i = 0; i < 0x10000000; i += 4096) {
@@ -67,9 +83,13 @@ void paging_init(void) {
     // Identity map the LAPIC MMIO region (0xFEE00000, 1 page)
     // This must be done here so APs can call apic_get_id() after loading kernel CR3
     paging_map_page(0xFEE00000, 0xFEE00000, 3);
+    
+    // Identity map the TPM MMIO region (0xFED40000)
+    paging_map_page(0xFED40000, 0xFED40000, 3);
+    paging_map_page(0xFED41000, 0xFED41000, 3);
 
     // Assembly function to set CR3 and enable CR0 paging bit
-    asm volatile("mov %0, %%cr3" :: "r"(current_page_directory));
+    asm volatile("mov %0, %%cr3" :: "r"(paging_get_current_dir()));
     uint32_t cr0;
     asm volatile("mov %%cr0, %0" : "=r"(cr0));
     cr0 |= 0x80000000; // Enable paging!
@@ -79,17 +99,31 @@ void paging_init(void) {
 uint32_t* paging_clone_directory(void) {
     uint32_t* dir = (uint32_t*)pmm_alloc_frame();
     memset(dir, 0, 4096);
+    
+    uint32_t* active_dir = paging_get_current_dir();
 
     for (int i = 0; i < 1024; i++) {
-        if (kernel_page_directory[i] & 1) {
+        if (!(active_dir[i] & 1)) continue;  /* PDE not present — skip */
+
+        /* A PDE belongs to the kernel (shared) if:
+         *   1. The kernel_page_directory has it with the SAME physical page table
+         *   2. AND it is NOT user-accessible (no user bit)
+         * If the user process promoted a kernel PDE to user-accessible (e.g.
+         * init.elf code in the 0–256 MB identity-map region), we treat it as
+         * a user PDE and COW-clone it so the child gets its own copy. */
+        int is_kernel_shared = (kernel_page_directory[i] & 1) &&
+                               !(active_dir[i] & 4) &&
+                               ((active_dir[i] & ~0xFFF) == (kernel_page_directory[i] & ~0xFFF));
+
+        if (is_kernel_shared) {
             dir[i] = kernel_page_directory[i]; // share kernel pages
-        } else if (current_page_directory[i] & 1) {
+        } else {
             // User page table — COW: share pages read-only
             uint32_t* pt_child = (uint32_t*)pmm_alloc_frame();
             memset(pt_child, 0, 4096);
-            dir[i] = (uint32_t)pt_child | (current_page_directory[i] & 0xFFF);
+            dir[i] = (uint32_t)pt_child | (active_dir[i] & 0xFFF);
 
-            uint32_t* src_pt = (uint32_t*)(current_page_directory[i] & ~0xFFF);
+            uint32_t* src_pt = (uint32_t*)(active_dir[i] & ~0xFFF);
             for (int j = 0; j < 1024; j++) {
                 if (src_pt[j] & 1) {
                     uint32_t pte  = src_pt[j];
@@ -121,19 +155,18 @@ void paging_register_tlb_handler(void) {
 }
 
 void paging_switch_directory(uint32_t* dir) {
-    current_page_directory = dir;
     asm volatile("mov %0, %%cr3" :: "r"(dir));
 }
 
 /* Page fault handler — hooked from ISR 14 */
-void paging_page_fault_handler(uint32_t fault_addr, uint32_t error_code) {
+void paging_page_fault_handler(uint32_t fault_addr, uint32_t error_code, struct registers* regs) {
     extern void task_exit(void);
 
     /* Check for swap-backed page (present=0, bit9=1) */
     {
         uint32_t pde_idx = fault_addr >> 22;
         uint32_t pte_idx = (fault_addr >> 12) & 0x3FF;
-        uint32_t* pd = current_page_directory;
+        uint32_t* pd = paging_get_current_dir();
         if ((pd[pde_idx] & 1) && !(error_code & 1)) {
             uint32_t* pt = (uint32_t*)(pd[pde_idx] & ~0xFFF);
             uint32_t pte = pt[pte_idx];
@@ -146,20 +179,45 @@ void paging_page_fault_handler(uint32_t fault_addr, uint32_t error_code) {
     }
 
     if (!(error_code & 2)) {
-        terminal_printf("[PAGING] Read fault at 0x%x (err=0x%x) — killing task\n",
-                        fault_addr, error_code);
+        extern void com1_print(const char*);
+        extern void com1_print_hex(uint32_t);
+        com1_print("\n[PAGING] Read fault at "); com1_print_hex(fault_addr);
+        com1_print(" (err="); com1_print_hex(error_code); com1_print(")");
+        if (regs) {
+            com1_print(" EIP="); com1_print_hex(regs->eip);
+            com1_print(" CS="); com1_print_hex(regs->cs);
+        }
+        /* Print task name */
+        {
+            extern const char* task_current_name(void);
+            const char* tname = task_current_name();
+            if (tname) { com1_print(" task="); com1_print(tname); }
+        }
+        com1_print("\n");
         task_exit(); return;
     }
 
     /* Write fault — COW handling */
     uint32_t pde_idx = fault_addr >> 22;
     uint32_t pte_idx = (fault_addr >> 12) & 0x3FF;
-    uint32_t* pd = current_page_directory;
+    uint32_t* pd = paging_get_current_dir();
 
-    if (!(pd[pde_idx] & 1)) { task_exit(); return; }
+    if (!(pd[pde_idx] & 1)) { 
+        extern void com1_print(const char*);
+        extern void com1_print_hex(uint32_t);
+        com1_print("\n[PAGING] Write fault (PDE missing) at "); com1_print_hex(fault_addr);
+        if (regs) { com1_print(" EIP="); com1_print_hex(regs->eip); }
+        com1_print("\n");
+        task_exit(); return; 
+    }
     uint32_t* pt = (uint32_t*)(pd[pde_idx] & ~0xFFF);
     uint32_t pte  = pt[pte_idx];
-    if (!(pte & 1))           { task_exit(); return; }
+    if (!(pte & 1))           { 
+        extern void com1_print(const char*);
+        extern void com1_print_hex(uint32_t);
+        com1_print("\n[PAGING] Write fault (PTE missing) at "); com1_print_hex(fault_addr); com1_print("\n");
+        task_exit(); return; 
+    }
 
     uint32_t phys = pte & ~0xFFF;
     uint32_t frame = phys >> 12;

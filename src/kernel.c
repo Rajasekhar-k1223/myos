@@ -26,6 +26,7 @@
 #include "ahci.h"
 #include "fs.h"
 #include "fat16.h"
+#include "fat32.h"
 #include "speaker.h"
 #include "rtl8139.h"
 #include "sb16.h"
@@ -109,7 +110,11 @@ static void putentryat(char c, uint8_t color, uint32_t x, uint32_t y) {
 static int ansi_state = 0;
 static int ansi_param = 0;
 
+/* Set to 1 to suppress all terminal_printf output (e.g. during installer) */
+int terminal_quiet = 0;
+
 void terminal_putchar(char c) {
+    if (terminal_quiet) return;
     if (shell_window && shell_window->active) {
         wm_putchar(shell_window, c);
         return;
@@ -321,6 +326,13 @@ static void fpu_init(void) {
     __asm__ volatile("fninit");  /* reset FPU to initial state */
 }
 
+void init_thread(void) {
+    extern int elf_load_and_run(const char*, const char*);
+    terminal_printf("[Kernel] Spawning userspace init daemon...\n");
+    elf_load_and_run("bin/init.elf", NULL);
+    for (;;) __asm__ volatile("hlt");
+}
+
 /* ── kernel_main ─────────────────────────────────────────────────────────── */
 void kernel_main(uint32_t magic, uint32_t mb2_addr) {
     if (magic != MULTIBOOT2_MAGIC)
@@ -468,9 +480,11 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
         if (disk_ok) {
             if (fat16_init()) {
                 boot_ok("FAT", "FAT16 filesystem mounted - 'fat ls/read/write' available");
+            } else if (fat32_init()) {
+                boot_ok("FAT", "FAT32 filesystem mounted");
             } else {
                 terminal_setcolor(vga_entry_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK));
-                terminal_writestring(BOX_V "  [WARN]  FAT16 not found - disk may need formatting\n");
+                terminal_writestring(BOX_V "  [WARN]  FAT16/FAT32 not found - disk may need formatting\n");
                 terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
                 (void)det;
             }
@@ -484,6 +498,12 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
     pit_enable_scheduling();
     boot_ok("SCH", "Preemptive scheduler active - 20 ms time slice (2 ticks)");
 
+    /* ── SMP: boot additional cores ── */
+    {
+        extern void smp_init(void);
+        smp_init();
+    }
+
     /* ── User Mode ── */
     boot_section("User Mode & Syscalls");
     syscall_init();
@@ -495,35 +515,104 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
     hline(BOX_BL, '\xCD', BOX_BR);
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     terminal_putchar('\n');
+    
+    boot_section("Userspace Display Server");
+    boot_ok("WM ", "Kernel GUI enabled.");
+    wm_init(); // Re-enabled the kernel GUI
 
-    boot_section("Window Manager");
-    wm_init();
-    boot_ok("WM ", "ElseaOS compositing window manager started");
-
-    wm_create_window(50, 50, 400, 300, "System Monitor");
-    shell_window = wm_create_window(150, 100, 600, 400, "Terminal");
-
-    // Initialize Networking
+    // Initialize Networking, Audio, USB
     rtl8139_init();
-
-    // Initialize Audio
     sb16_init();
-    uhci_init();
+    /* AC97 fallback: init after SB16 so hardware can coexist; ac97_init()
+       returns 0 if not found, 1 if present — no-op if SB16 already handled audio */
+    {
+        extern int ac97_init(void);
+        if (ac97_init())
+            terminal_printf("[AC97] AC'97 audio controller detected as secondary backend\n");
+    }
+    //uhci_init();
+
+    /* VFS: mount initrd + FAT16/FAT32 + EXT2 */
+    {
+        extern void vfs_init(void);
+        vfs_init();
+    }
+
+    /* i18n */
+    { extern void i18n_init(void); i18n_init(); }
+
+    /* TPM */
+    { extern void tpm_init(void); tpm_init(); }
+
+    /* FDE */
+    { extern void fde_init(void); fde_init(); }
+
+    /* Voice assistant */
+    { extern void voice_init(void); voice_init(); }
+
+    /* Bluetooth */
+    { extern void bluetooth_init(void); bluetooth_init(); }
+
+    /* OTA + Package manager */
+    { extern void ota_init(void); ota_init(); }
+    { extern void pkg_init(void); pkg_init(); }
+
+    /* TLS engine */
+    { extern void ssl_init(void); ssl_init(); }
 
     // Initialize TTF
     size_t font_size;
     void* font_data = tar_get_file("font.ttf", &font_size);
     if (font_data) {
         ttf_init(font_data);
-        wm_draw_desktop_text("ElseaOS TTF Vector Math Engine!", 0.04f, 50, 150, 0xFFFFFF);
     } else {
         terminal_printf("[TTF] Error: font.ttf not found in initrd\n");
     }
 
-    shell_init();
+    // Suppress boot log and clear screen before the graphical installer
+    terminal_quiet = 1;
+    vesa_clear(0x0B0E14);   /* fill with installer background colour */
 
-    while (1) {
-        wm_process_events();
-        __asm__ volatile("hlt");
+    // Run the graphical OS installer
+    extern void installer_run(void);
+    installer_run();
+    extern int nk_installer_running;
+
+    shell_init();
+    int desktop_apps_started = 0;
+
+    for (;;) {
+        extern int nk_installer_running;
+
+        if (nk_installer_running) {
+            /* Installer: spin freely — no hlt so mouse/clicks are immediate */
+            extern void installer_render_frame(void);
+            installer_render_frame();
+
+            extern void wm_draw_mouse(void);
+            wm_draw_mouse();
+
+            extern void vesa_swap_buffers(void);
+            vesa_swap_buffers();
+        } else {
+            if (!desktop_apps_started) {
+                terminal_quiet = 0;
+                desktop_apps_started = 1;
+            }
+
+            extern void wm_process_events(void);
+            wm_process_events();
+
+            /* Voice keepalive and USB poll only needed in desktop mode */
+            { extern void voice_process_audio(const short*, int);
+              static short _silence[512];
+              voice_process_audio(_silence, 512); }
+
+            extern void uhci_poll(void);
+            uhci_poll();
+
+            /* Desktop can yield to interrupts — no tight spin needed */
+            __asm__ volatile("hlt");
+        }
     }
 }

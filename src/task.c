@@ -29,7 +29,7 @@ static inline void unlock_sched(void) {
 }
 
 extern void context_switch(cpu_context_t* old_ctx, cpu_context_t* new_ctx);
-extern uint32_t* current_page_directory;
+extern uint32_t* paging_get_current_dir();
 extern void paging_switch_directory(uint32_t* dir);
 extern void tss_set_stack(uint32_t core_idx, uint32_t ss0, uint32_t esp0);
 void jump_usermode(void);
@@ -49,6 +49,11 @@ task_t* task_current(void) {
     int idx = current_tasks[apic_get_id()];
     if (idx < 0 || idx >= MAX_TASKS) return &tasks[0];
     return &tasks[idx];
+}
+
+const char* task_current_name(void) {
+    task_t* t = task_current();
+    return t ? t->name : "(none)";
 }
 
 uint32_t task_getpid(void) {
@@ -85,7 +90,7 @@ void tasking_init(void) {
     tasks[0].cpu   = bsp_apic_id;
     tasks[0].affinity = bsp_apic_id; // Kernel task MUST run on BSP for now
     strncpy(tasks[0].name, "kernel", TASK_NAME_LEN - 1);
-    tasks[0].page_directory = current_page_directory;
+    tasks[0].page_directory = paging_get_current_dir();
     tasks[0].kernel_stack = (uint32_t)(tasks[0].stack + TASK_STACK_SIZE);
     task_count_n = 1;
     
@@ -142,7 +147,7 @@ int task_create(const char* name, void (*entry)(void)) {
     *(--sp) = (uint32_t)task_exit;   /* if entry() returns — popped by entry's ret */
     *(--sp) = (uint32_t)entry;       /* popped by context_switch's final ret       */
 
-    t->page_directory = current_page_directory;
+    t->page_directory = paging_get_current_dir();
     t->kernel_stack   = (uint32_t)(t->stack + TASK_STACK_SIZE);
 
     t->ctx.esp    = (uint32_t)sp;     /* points to entry — ret pops it as EIP      */
@@ -222,6 +227,20 @@ int task_fork(struct registers* regs) {
     if (task_current() == parent) {
         child->ctx.esp += offset;
         child->ctx.ebp += offset; // Assuming EBP is on the stack
+        
+        // Fix the EBP chain on the child's stack so it doesn't point to the parent's stack
+        uint32_t* child_ebp = (uint32_t*)child->ctx.ebp;
+        uint32_t child_stack_bottom = (uint32_t)child->stack;
+        uint32_t child_stack_top = child_stack_bottom + TASK_STACK_SIZE;
+        while ((uint32_t)child_ebp >= child_stack_bottom && (uint32_t)child_ebp < child_stack_top) {
+            uint32_t next_ebp = *child_ebp;
+            if (next_ebp >= (uint32_t)parent->stack && next_ebp < (uint32_t)parent->stack + TASK_STACK_SIZE) {
+                *child_ebp = next_ebp + offset;
+                child_ebp = (uint32_t*)*child_ebp;
+            } else {
+                break;
+            }
+        }
         
         struct registers* child_regs = (struct registers*)((uint32_t)regs + offset);
         child_regs->eax = 0; // Return 0 in child
@@ -303,8 +322,6 @@ void task_tick(void) {
                 tasks[i].state = TASK_READY;
         }
     }
-    extern void uhci_poll(void);
-    uhci_poll();
 }
 
 /*
@@ -375,7 +392,7 @@ void schedule(void) {
     tasks[next].state = TASK_RUNNING;
 
     // Switch Address Space
-    if (tasks[next].page_directory && tasks[next].page_directory != current_page_directory) {
+    if (tasks[next].page_directory && tasks[next].page_directory != paging_get_current_dir()) {
         paging_switch_directory(tasks[next].page_directory);
     }
     

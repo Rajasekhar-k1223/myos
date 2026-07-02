@@ -60,7 +60,7 @@ void usb_init(void);
 void usb_enumerate_device(uint8_t port);
 
 /* Bulk transfers */
-int usb_bulk_in(uint8_t dev_addr, uint8_t ep, void* buf, uint16_t len);
+int usb_bulk_in(uint8_t dev_addr, uint8_t ep, void* buf, uint16_t len, int timeout_ms);
 int usb_bulk_out(uint8_t dev_addr, uint8_t ep, const void* buf, uint16_t len);
 
 /* Print detected USB devices (lsusb shell command) */

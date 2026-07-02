@@ -1,41 +1,276 @@
+/*
+ * AES-256 (FIPS 197) and SHA-256 (FIPS 180-4) — bare-metal, no stdlib.
+ */
 #include "crypto.h"
 #include "kernel.h"
+#include "string.h"
 
-void crypto_init(void) {
-    terminal_printf("[CRYPTO] AES-256 and SHA-256 engines initialized.\n");
+/* ── AES S-box and inverse S-box (FIPS 197 Table 4 / Table 6) ─────────── */
+static const uint8_t sbox[256] = {
+    0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+    0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+    0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+    0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+    0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+    0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+    0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+    0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+    0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+    0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+    0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+    0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+    0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+    0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+    0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+    0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
+};
+
+static const uint8_t inv_sbox[256] = {
+    0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
+    0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
+    0x54,0x7b,0x94,0x32,0xa6,0xc2,0x23,0x3d,0xee,0x4c,0x95,0x0b,0x42,0xfa,0xc3,0x4e,
+    0x08,0x2e,0xa1,0x66,0x28,0xd9,0x24,0xb2,0x76,0x5b,0xa2,0x49,0x6d,0x8b,0xd1,0x25,
+    0x72,0xf8,0xf6,0x64,0x86,0x68,0x98,0x16,0xd4,0xa4,0x5c,0xcc,0x5d,0x65,0xb6,0x92,
+    0x6c,0x70,0x48,0x50,0xfd,0xed,0xb9,0xda,0x5e,0x15,0x46,0x57,0xa7,0x8d,0x9d,0x84,
+    0x90,0xd8,0xab,0x00,0x8c,0xbc,0xd3,0x0a,0xf7,0xe4,0x58,0x05,0xb8,0xb3,0x45,0x06,
+    0xd0,0x2c,0x1e,0x8f,0xca,0x3f,0x0f,0x02,0xc1,0xaf,0xbd,0x03,0x01,0x13,0x8a,0x6b,
+    0x3a,0x91,0x11,0x41,0x4f,0x67,0xdc,0xea,0x97,0xf2,0xcf,0xce,0xf0,0xb4,0xe6,0x73,
+    0x96,0xac,0x74,0x22,0xe7,0xad,0x35,0x85,0xe2,0xf9,0x37,0xe8,0x1c,0x75,0xdf,0x6e,
+    0x47,0xf1,0x1a,0x71,0x1d,0x29,0xc5,0x89,0x6f,0xb7,0x62,0x0e,0xaa,0x18,0xbe,0x1b,
+    0xfc,0x56,0x3e,0x4b,0xc6,0xd2,0x79,0x20,0x9a,0xdb,0xc0,0xfe,0x78,0xcd,0x5a,0xf4,
+    0x1f,0xdd,0xa8,0x33,0x88,0x07,0xc7,0x31,0xb1,0x12,0x10,0x59,0x27,0x80,0xec,0x5f,
+    0x60,0x51,0x7f,0xa9,0x19,0xb5,0x4a,0x0d,0x2d,0xe5,0x7a,0x9f,0x93,0xc9,0x9c,0xef,
+    0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
+    0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
+};
+
+/* Rcon table for key schedule */
+static const uint8_t rcon[11] = {
+    0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36
+};
+
+/* GF(2^8) general multiply */
+static uint8_t gmul(uint8_t a, uint8_t b) {
+    uint8_t p = 0;
+    for (int i = 0; i < 8; i++) {
+        if (b & 1) p ^= a;
+        uint8_t hi = a & 0x80;
+        a = (uint8_t)(a << 1);
+        if (hi) a ^= 0x1b;
+        b >>= 1;
+    }
+    return p;
 }
 
+/* Key schedule: expand 32-byte key → 60 uint32_t round keys */
 void aes256_init(aes256_ctx_t* ctx, const uint8_t* key) {
-    /* Basic stub for AES Key Expansion */
     if (!ctx || !key) return;
-    for(int i = 0; i < 60; i++) {
-        ctx->round_keys[i] = key[i % 32]; /* Mock key expansion */
+    uint32_t* rk = ctx->round_keys;
+    /* First 8 words straight from key */
+    for (int i = 0; i < 8; i++) {
+        rk[i] = ((uint32_t)key[4*i]   << 24) | ((uint32_t)key[4*i+1] << 16)
+               |((uint32_t)key[4*i+2] <<  8) |  (uint32_t)key[4*i+3];
     }
+    for (int i = 8; i < 60; i++) {
+        uint32_t tmp = rk[i - 1];
+        if ((i % 8) == 0) {
+            /* SubWord(RotWord(tmp)) XOR Rcon */
+            tmp = ((uint32_t)sbox[(tmp >> 16) & 0xFF] << 24)
+                | ((uint32_t)sbox[(tmp >>  8) & 0xFF] << 16)
+                | ((uint32_t)sbox[ tmp        & 0xFF] <<  8)
+                | ((uint32_t)sbox[(tmp >> 24) & 0xFF]);
+            tmp ^= (uint32_t)rcon[i / 8] << 24;
+        } else if ((i % 8) == 4) {
+            /* SubWord only */
+            tmp = ((uint32_t)sbox[(tmp >> 24) & 0xFF] << 24)
+                | ((uint32_t)sbox[(tmp >> 16) & 0xFF] << 16)
+                | ((uint32_t)sbox[(tmp >>  8) & 0xFF] <<  8)
+                | ((uint32_t)sbox[ tmp        & 0xFF]);
+        }
+        rk[i] = rk[i - 8] ^ tmp;
+    }
+}
+
+/* State helper macros — state is row-major 4×4 bytes */
+#define S(r,c) state[(r)*4+(c)]
+
+static void add_round_key(uint8_t* state, const uint32_t* rk) {
+    for (int c = 0; c < 4; c++) {
+        uint32_t w = rk[c];
+        S(0,c) ^= (w >> 24) & 0xFF;
+        S(1,c) ^= (w >> 16) & 0xFF;
+        S(2,c) ^= (w >>  8) & 0xFF;
+        S(3,c) ^=  w        & 0xFF;
+    }
+}
+static void sub_bytes(uint8_t* state) {
+    for (int i = 0; i < 16; i++) state[i] = sbox[state[i]];
+}
+static void inv_sub_bytes(uint8_t* state) {
+    for (int i = 0; i < 16; i++) state[i] = inv_sbox[state[i]];
+}
+static void shift_rows(uint8_t* state) {
+    uint8_t t;
+    /* Row 1: rotate left 1 */
+    t=S(1,0); S(1,0)=S(1,1); S(1,1)=S(1,2); S(1,2)=S(1,3); S(1,3)=t;
+    /* Row 2: rotate left 2 */
+    t=S(2,0); S(2,0)=S(2,2); S(2,2)=t; t=S(2,1); S(2,1)=S(2,3); S(2,3)=t;
+    /* Row 3: rotate left 3 (= rotate right 1) */
+    t=S(3,3); S(3,3)=S(3,2); S(3,2)=S(3,1); S(3,1)=S(3,0); S(3,0)=t;
+}
+static void inv_shift_rows(uint8_t* state) {
+    uint8_t t;
+    t=S(1,3); S(1,3)=S(1,2); S(1,2)=S(1,1); S(1,1)=S(1,0); S(1,0)=t;
+    t=S(2,0); S(2,0)=S(2,2); S(2,2)=t; t=S(2,1); S(2,1)=S(2,3); S(2,3)=t;
+    t=S(3,0); S(3,0)=S(3,1); S(3,1)=S(3,2); S(3,2)=S(3,3); S(3,3)=t;
+}
+static void mix_columns(uint8_t* state) {
+    for (int c = 0; c < 4; c++) {
+        uint8_t s0=S(0,c), s1=S(1,c), s2=S(2,c), s3=S(3,c);
+        S(0,c) = gmul(0x02,s0)^gmul(0x03,s1)^s2^s3;
+        S(1,c) = s0^gmul(0x02,s1)^gmul(0x03,s2)^s3;
+        S(2,c) = s0^s1^gmul(0x02,s2)^gmul(0x03,s3);
+        S(3,c) = gmul(0x03,s0)^s1^s2^gmul(0x02,s3);
+    }
+}
+static void inv_mix_columns(uint8_t* state) {
+    for (int c = 0; c < 4; c++) {
+        uint8_t s0=S(0,c), s1=S(1,c), s2=S(2,c), s3=S(3,c);
+        S(0,c) = gmul(0x0e,s0)^gmul(0x0b,s1)^gmul(0x0d,s2)^gmul(0x09,s3);
+        S(1,c) = gmul(0x09,s0)^gmul(0x0e,s1)^gmul(0x0b,s2)^gmul(0x0d,s3);
+        S(2,c) = gmul(0x0d,s0)^gmul(0x09,s1)^gmul(0x0e,s2)^gmul(0x0b,s3);
+        S(3,c) = gmul(0x0b,s0)^gmul(0x0d,s1)^gmul(0x09,s2)^gmul(0x0e,s3);
+    }
+}
+
+/* Copy input bytes to column-major state */
+static void bytes_to_state(const uint8_t* in, uint8_t* state) {
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+            state[r*4+c] = in[c*4+r];
+}
+static void state_to_bytes(const uint8_t* state, uint8_t* out) {
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+            out[c*4+r] = state[r*4+c];
 }
 
 void aes256_encrypt_block(aes256_ctx_t* ctx, const uint8_t* in, uint8_t* out) {
-    /* Basic stub: XOR with mock round keys */
     if (!ctx || !in || !out) return;
-    for (int i = 0; i < AES_BLOCK_SIZE; i++) {
-        out[i] = in[i] ^ (ctx->round_keys[i] & 0xFF);
+    uint8_t state[16];
+    bytes_to_state(in, state);
+    add_round_key(state, ctx->round_keys);
+    for (int r = 1; r <= 13; r++) {
+        sub_bytes(state);
+        shift_rows(state);
+        mix_columns(state);
+        add_round_key(state, ctx->round_keys + r*4);
     }
+    sub_bytes(state);
+    shift_rows(state);
+    add_round_key(state, ctx->round_keys + 56);
+    state_to_bytes(state, out);
 }
 
 void aes256_decrypt_block(aes256_ctx_t* ctx, const uint8_t* in, uint8_t* out) {
-    /* Basic stub: XOR with mock round keys */
     if (!ctx || !in || !out) return;
-    for (int i = 0; i < AES_BLOCK_SIZE; i++) {
-        out[i] = in[i] ^ (ctx->round_keys[i] & 0xFF);
+    uint8_t state[16];
+    bytes_to_state(in, state);
+    add_round_key(state, ctx->round_keys + 56);
+    for (int r = 13; r >= 1; r--) {
+        inv_shift_rows(state);
+        inv_sub_bytes(state);
+        add_round_key(state, ctx->round_keys + r*4);
+        inv_mix_columns(state);
     }
+    inv_shift_rows(state);
+    inv_sub_bytes(state);
+    add_round_key(state, ctx->round_keys);
+    state_to_bytes(state, out);
+}
+
+/* ── SHA-256 (FIPS 180-4) ───────────────────────────────────────────── */
+static const uint32_t K256[64] = {
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+};
+
+#define ROTR32(x,n) (((x)>>(n))|((x)<<(32-(n))))
+#define CH(e,f,g)   (((e)&(f))^((~(e))&(g)))
+#define MAJ(a,b,c)  (((a)&(b))^((a)&(c))^((b)&(c)))
+#define EP0(a)      (ROTR32(a,2)^ROTR32(a,13)^ROTR32(a,22))
+#define EP1(e)      (ROTR32(e,6)^ROTR32(e,11)^ROTR32(e,25))
+#define SIG0(x)     (ROTR32(x,7)^ROTR32(x,18)^((x)>>3))
+#define SIG1(x)     (ROTR32(x,17)^ROTR32(x,19)^((x)>>10))
+
+static void sha256_compress(uint32_t* h, const uint8_t* blk) {
+    uint32_t w[64];
+    for (int i = 0; i < 16; i++)
+        w[i] = ((uint32_t)blk[i*4]<<24)|((uint32_t)blk[i*4+1]<<16)
+              |((uint32_t)blk[i*4+2]<<8)|(uint32_t)blk[i*4+3];
+    for (int i = 16; i < 64; i++)
+        w[i] = SIG1(w[i-2]) + w[i-7] + SIG0(w[i-15]) + w[i-16];
+    uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+    for (int i = 0; i < 64; i++) {
+        uint32_t t1 = hh + EP1(e) + CH(e,f,g) + K256[i] + w[i];
+        uint32_t t2 = EP0(a) + MAJ(a,b,c);
+        hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    }
+    h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d;
+    h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
 }
 
 void sha256_hash(const uint8_t* data, uint32_t len, uint8_t* hash_out) {
-    /* Very basic mock hash */
     if (!data || !hash_out) return;
-    for (int i = 0; i < SHA256_HASH_SIZE; i++) {
-        hash_out[i] = 0;
+    uint32_t h[8] = {
+        0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+        0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19
+    };
+    uint8_t  block[64];
+    uint32_t off = 0, total_bits_hi = 0;
+    uint32_t total_bits_lo = len * 8;
+    total_bits_hi = (len >> 29); /* high 3 bits of bit-count (len * 8) */
+
+    while (off + 64 <= len) {
+        sha256_compress(h, data + off);
+        off += 64;
     }
-    for (uint32_t i = 0; i < len; i++) {
-        hash_out[i % SHA256_HASH_SIZE] ^= data[i];
+    /* Final partial block */
+    uint32_t rem = len - off;
+    for (uint32_t i = 0; i < rem; i++) block[i] = data[off + i];
+    block[rem] = 0x80;
+    if (rem < 56) {
+        for (uint32_t i = rem + 1; i < 56; i++) block[i] = 0;
+    } else {
+        for (uint32_t i = rem + 1; i < 64; i++) block[i] = 0;
+        sha256_compress(h, block);
+        for (int i = 0; i < 56; i++) block[i] = 0;
     }
+    /* Append bit-length big-endian */
+    block[56] = (uint8_t)(total_bits_hi >> 24);
+    block[57] = (uint8_t)(total_bits_hi >> 16);
+    block[58] = (uint8_t)(total_bits_hi >>  8);
+    block[59] = (uint8_t)(total_bits_hi);
+    block[60] = (uint8_t)(total_bits_lo >> 24);
+    block[61] = (uint8_t)(total_bits_lo >> 16);
+    block[62] = (uint8_t)(total_bits_lo >>  8);
+    block[63] = (uint8_t)(total_bits_lo);
+    sha256_compress(h, block);
+
+    for (int i = 0; i < 8; i++) {
+        hash_out[i*4+0] = (uint8_t)(h[i] >> 24);
+        hash_out[i*4+1] = (uint8_t)(h[i] >> 16);
+        hash_out[i*4+2] = (uint8_t)(h[i] >>  8);
+        hash_out[i*4+3] = (uint8_t)(h[i]);
+    }
+}
+
+void crypto_init(void) {
+    terminal_printf("[CRYPTO] AES-256 (FIPS 197) + SHA-256 (FIPS 180-4) ready.\n");
 }

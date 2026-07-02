@@ -13,6 +13,11 @@ static int32_t mix_acc[MIXER_BUF_SIZE];
 
 // Tick counter used to rate-limit feeding SB16 (not every PIT tick needs audio).
 static uint32_t tick_counter = 0;
+uint8_t master_volume = 255;
+
+void mixer_set_volume(uint8_t vol) {
+    master_volume = vol;
+}
 
 // How many PIT ticks between mixer feeds.
 // PIT runs at 100 Hz by default; aim for ~10 ms blocks → 1 tick per feed.
@@ -112,6 +117,7 @@ void mixer_tick(void) {
             int32_t sample = (int32_t)c->samples[c->pos] - 128;
             // Apply volume (0-255 scale)
             sample = (sample * (int32_t)c->volume) / 255;
+            sample = (sample * (int32_t)master_volume) / 255;
             mix_acc[s] += sample;
             c->pos++;
         }

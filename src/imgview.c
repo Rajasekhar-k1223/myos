@@ -1,6 +1,8 @@
 #include "imgview.h"
 #include "bmp.h"
 #include "png.h"
+#include "jpeg.h"
+#include "svg.h"
 #include "tar.h"
 #include "wm.h"
 #include "string.h"
@@ -77,8 +79,10 @@ void imgview_init(window_t* win, const char* filename) {
         iv_name[63] = '\0';
         memset(iv_src, 0, sizeof(iv_src));
 
-        /* Detect PNG by extension */
+        /* Detect PNG/JPEG/SVG by extension */
         int is_png = 0;
+        int is_jpeg = 0;
+        int is_svg = 0;
         int fnlen = (int)strlen(filename);
         if (fnlen > 4 &&
             filename[fnlen-4] == '.' &&
@@ -86,8 +90,45 @@ void imgview_init(window_t* win, const char* filename) {
             (filename[fnlen-2] == 'n' || filename[fnlen-2] == 'N') &&
             (filename[fnlen-1] == 'g' || filename[fnlen-1] == 'G'))
             is_png = 1;
+        if (fnlen > 4 &&
+            filename[fnlen-4] == '.' &&
+            (filename[fnlen-3] == 'j' || filename[fnlen-3] == 'J') &&
+            (filename[fnlen-2] == 'p' || filename[fnlen-2] == 'P') &&
+            (filename[fnlen-1] == 'g' || filename[fnlen-1] == 'G'))
+            is_jpeg = 1;
+        if (fnlen > 5 &&
+            filename[fnlen-5] == '.' &&
+            (filename[fnlen-4] == 'j' || filename[fnlen-4] == 'J') &&
+            (filename[fnlen-3] == 'p' || filename[fnlen-3] == 'P') &&
+            (filename[fnlen-2] == 'e' || filename[fnlen-2] == 'E') &&
+            (filename[fnlen-1] == 'g' || filename[fnlen-1] == 'G'))
+            is_jpeg = 1;
+        if (fnlen > 4 &&
+            filename[fnlen-4] == '.' &&
+            (filename[fnlen-3] == 's' || filename[fnlen-3] == 'S') &&
+            (filename[fnlen-2] == 'v' || filename[fnlen-2] == 'V') &&
+            (filename[fnlen-1] == 'g' || filename[fnlen-1] == 'G'))
+            is_svg = 1;
 
-        if (is_png) {
+        if (is_svg) {
+            size_t fsz = 0;
+            const uint8_t* fdata = (const uint8_t*)tar_get_file(filename, &fsz);
+            if (!fdata || fsz == 0 ||
+                svg_decode(fdata, (uint32_t)fsz, iv_src, IV_SRC_W, IV_SRC_H) != 0) {
+                memset(iv_src, 0, sizeof(iv_src));
+            }
+            iv_src_w = IV_SRC_W;
+            iv_src_h = IV_SRC_H;
+        } else if (is_jpeg) {
+            size_t fsz = 0;
+            const uint8_t* fdata = (const uint8_t*)tar_get_file(filename, &fsz);
+            if (!fdata || fsz == 0 ||
+                jpeg_decode(fdata, (uint32_t)fsz, iv_src, IV_SRC_W, IV_SRC_H) != 0) {
+                memset(iv_src, 0, sizeof(iv_src));
+            }
+            iv_src_w = IV_SRC_W;
+            iv_src_h = IV_SRC_H;
+        } else if (is_png) {
             size_t fsz = 0;
             const uint8_t* fdata = (const uint8_t*)tar_get_file(filename, &fsz);
             if (fdata && fsz > 8) {

@@ -31,6 +31,67 @@ static void load_shared_library(const char* libname, uint32_t load_base) {
                 memcpy((void*)vaddr, lib_data + offset, filesz);
         }
     }
+
+    /* Apply relocations to the library's own PLT GOT entries.
+     * Since this is a shared object loaded at load_base (not 0),
+     * all PLT stub addresses stored in .got.plt need +load_base. */
+    Elf32_Dyn* dyn = 0;
+    for (int i=0; i<hdr->e_phnum; i++) {
+        if (phdrs[i].p_type == PT_DYNAMIC) {
+            dyn = (Elf32_Dyn*)(lib_data + phdrs[i].p_offset);
+            break;
+        }
+    }
+    if (!dyn) return;
+
+    uint32_t jmprel_off = 0, pltrelsz = 0;
+    uint32_t pltgot_va = 0;
+    for (Elf32_Dyn* d = dyn; d->d_tag != DT_NULL; d++) {
+        if (d->d_tag == DT_JMPREL)   jmprel_off = d->d_un.d_ptr;  /* file-relative VA */
+        if (d->d_tag == DT_PLTRELSZ) pltrelsz   = d->d_un.d_val;
+        if (d->d_tag == DT_PLTGOT)   pltgot_va  = d->d_un.d_ptr;  /* file-relative VA */
+    }
+
+    /* Patch .got.plt: GOT[0] = .dynamic VA+base, GOT[1]=0, GOT[2]=0,
+     * GOT[3..] = initial PLT stub addresses (file-relative) + load_base */
+    if (pltgot_va) {
+        uint32_t* got = (uint32_t*)(load_base + pltgot_va);
+        got[0] = load_base + got[0]; /* .dynamic VA */
+        got[1] = 0;                   /* link_map (unused) */
+        got[2] = 0;                   /* dl_resolve (unused) */
+        /* Patch each PLT entry's initial GOT stub pointer */
+        int count = (int)(pltrelsz / 8); /* each Elf32_Rel = 8 bytes */
+        for (int i = 0; i < count; i++) {
+            got[3 + i] = load_base + got[3 + i]; /* relocate stub addr */
+        }
+    }
+
+    /* Now resolve the library's own PLT entries against itself (self-contained). */
+    if (!jmprel_off || !pltrelsz) return;
+    Elf32_Rel* rels = (Elf32_Rel*)(lib_data + jmprel_off);
+    int count = (int)(pltrelsz / sizeof(Elf32_Rel));
+
+    /* Build symtab/strtab pointers from the dynamic section */
+    uint32_t symtab_off = 0, strtab_off = 0;
+    for (Elf32_Dyn* d = dyn; d->d_tag != DT_NULL; d++) {
+        if (d->d_tag == DT_SYMTAB) symtab_off = d->d_un.d_ptr;
+        if (d->d_tag == DT_STRTAB) strtab_off = d->d_un.d_ptr;
+    }
+    if (!symtab_off || !strtab_off) return;
+
+    Elf32_Sym* symtab = (Elf32_Sym*)(lib_data + symtab_off);
+    const char* strtab = (const char*)(lib_data + strtab_off);
+
+    for (int i = 0; i < count; i++) {
+        uint32_t sym_idx = ELF32_R_SYM(rels[i].r_info);
+        uint32_t sym_val = symtab[sym_idx].st_value;
+        if (sym_val) {
+            /* Symbol is defined within the library — patch to load_base + sym_val */
+            uint32_t* target = (uint32_t*)(load_base + rels[i].r_offset);
+            *target = load_base + sym_val;
+            (void)strtab; /* strtab available for debugging if needed */
+        }
+    }
 }
 
 static uint32_t find_sym_in_lib(const char* libname, const char* sym_name, uint32_t load_base) {
@@ -65,6 +126,9 @@ static uint32_t find_sym_in_lib(const char* libname, const char* sym_name, uint3
 }
 
 static void resolve_dynamic_links(const uint8_t* elf_data) {
+    extern void com1_print(const char*);
+    extern void com1_print_hex(uint32_t);
+
     Elf32_Ehdr* hdr = (Elf32_Ehdr*)elf_data;
     Elf32_Phdr* phdrs = (Elf32_Phdr*)(elf_data + hdr->e_phoff);
     Elf32_Dyn* dyn = 0;
@@ -80,6 +144,7 @@ static void resolve_dynamic_links(const uint8_t* elf_data) {
     // We found a dynamic section! Let's load our shared library.
     uint32_t libc_base = 0x20000000;
     load_shared_library("libc.so", libc_base);
+    com1_print("[ELF] libc.so loaded at 0x20000000\n");
 
     Elf32_Sym* symtab = 0;
     const char* strtab = 0;
@@ -94,12 +159,21 @@ static void resolve_dynamic_links(const uint8_t* elf_data) {
         if (dyn->d_tag == DT_PLTRELSZ) pltrelsz = dyn->d_un.d_val;
     }
 
+    com1_print("[ELF] symtab="); com1_print_hex((uint32_t)symtab);
+    com1_print(" strtab="); com1_print_hex((uint32_t)strtab);
+    com1_print(" jmprel="); com1_print_hex((uint32_t)jmprel);
+    com1_print(" pltrelsz="); com1_print_hex(pltrelsz); com1_print("\n");
+
     if (jmprel && symtab && strtab) {
         int count = pltrelsz / sizeof(Elf32_Rel);
         for (int i=0; i<count; i++) {
             uint32_t sym_idx = ELF32_R_SYM(jmprel[i].r_info);
             const char* name = strtab + symtab[sym_idx].st_name;
             uint32_t addr = find_sym_in_lib("libc.so", name, libc_base);
+            com1_print("[ELF] PLT["); com1_print_hex(i);
+            com1_print("] offset="); com1_print_hex(jmprel[i].r_offset);
+            com1_print(" sym="); com1_print(name ? name : "?");
+            com1_print(" -> "); com1_print_hex(addr); com1_print("\n");
             if (addr) {
                 uint32_t* target = (uint32_t*)jmprel[i].r_offset; // Virtual address
                 *target = addr;
@@ -109,7 +183,7 @@ static void resolve_dynamic_links(const uint8_t* elf_data) {
 }
 
 
-int elf_load_and_run(const char* filename) {
+int elf_load_and_run(const char* filename, const char* args_str) {
     size_t file_size;
     const uint8_t* elf_data = (const uint8_t*)tar_get_file(filename, &file_size);
     
@@ -130,11 +204,11 @@ int elf_load_and_run(const char* filename) {
         return -1;
     }
 
-    extern uint32_t* current_page_directory;
+    extern uint32_t* paging_get_current_dir();
     extern uint32_t* paging_clone_directory(void);
     extern void paging_switch_directory(uint32_t* dir);
     
-    uint32_t* old_dir = current_page_directory;
+    uint32_t* old_dir = paging_get_current_dir();
     uint32_t* new_dir = paging_clone_directory();
     paging_switch_directory(new_dir);
     
@@ -195,6 +269,44 @@ int elf_load_and_run(const char* filename) {
     // Now that the executable is mapped into the new page directory, resolve dynamic links
     resolve_dynamic_links(elf_data);
 
+    // --- Parse args and push to stack ---
+    uint32_t sp = user_stack_top;
+    uint32_t argv[32];
+    int argc = 0;
+    
+    // Push filename
+    sp -= strlen(filename) + 1;
+    strcpy((char*)sp, filename);
+    argv[argc++] = sp;
+    
+    if (args_str) {
+        char buf[256];
+        strncpy(buf, args_str, 255);
+        buf[255] = '\0';
+        char* p = buf;
+        while (*p && argc < 31) {
+            while (*p == ' ') p++;
+            if (!*p) break;
+            char* start = p;
+            while (*p && *p != ' ') p++;
+            if (*p) *p++ = '\0';
+            sp -= strlen(start) + 1;
+            strcpy((char*)sp, start);
+            argv[argc++] = sp;
+        }
+    }
+    argv[argc] = 0;
+    sp &= ~3;
+    sp -= (argc + 1) * 4;
+    uint32_t argv_ptr = sp;
+    memcpy((void*)sp, argv, (argc + 1) * 4);
+    sp -= 4;
+    *(uint32_t*)sp = argv_ptr;
+    sp -= 4;
+    *(uint32_t*)sp = argc;
+    
+    user_stack_top = sp; // Updated stack top for task_create_user
+    
     // Switch back to kernel directory so we don't crash before schedule
     paging_switch_directory(old_dir);
 
@@ -204,7 +316,7 @@ int elf_load_and_run(const char* filename) {
     return pid;
 }
 
-int task_exec(const char* filename, struct registers* regs) {
+int task_exec(const char* filename, const char* args_str, struct registers* regs) {
     size_t file_size;
     const uint8_t* elf_data = (const uint8_t*)tar_get_file(filename, &file_size);
     if (!elf_data) return -1;
@@ -212,7 +324,7 @@ int task_exec(const char* filename, struct registers* regs) {
     Elf32_Ehdr* header = (Elf32_Ehdr*)elf_data;
     if (header->e_ident_mag != ELF_MAGIC || header->e_machine != 3) return -1;
 
-    extern uint32_t* current_page_directory;
+    extern uint32_t* paging_get_current_dir();
     extern uint32_t* paging_clone_directory(void);
     extern void paging_switch_directory(uint32_t* dir);
     
@@ -252,10 +364,53 @@ int task_exec(const char* filename, struct registers* regs) {
     task_t* cur = task_current();
     cur->page_directory = new_dir;
     
+    // --- Parse args and push to stack ---
+    uint32_t sp = user_stack_top;
+    uint32_t argv[32];
+    int argc = 0;
+    
+    // Push filename
+    sp -= strlen(filename) + 1;
+    strcpy((char*)sp, filename);
+    argv[argc++] = sp;
+    
+    if (args_str) {
+        char buf[256];
+        strncpy(buf, args_str, 255);
+        buf[255] = '\0';
+        char* p = buf;
+        while (*p && argc < 31) {
+            while (*p == ' ') p++;
+            if (!*p) break;
+            char* start = p;
+            while (*p && *p != ' ') p++;
+            if (*p) *p++ = '\0';
+            sp -= strlen(start) + 1;
+            strcpy((char*)sp, start);
+            argv[argc++] = sp;
+        }
+    }
+    argv[argc] = 0;
+    
+    // Align SP
+    sp &= ~3;
+    
+    // Push argv array
+    sp -= (argc + 1) * 4;
+    uint32_t argv_ptr = sp;
+    memcpy((void*)sp, argv, (argc + 1) * 4);
+    
+    // Push argv pointer
+    sp -= 4;
+    *(uint32_t*)sp = argv_ptr;
+    
+    // Push argc
+    sp -= 4;
+    *(uint32_t*)sp = argc;
+    
     // Modify the registers pushed by the interrupt handler
-    // so when it returns, it jumps into the new ELF!
     regs->eip = header->e_entry;
-    regs->useresp = user_stack_top;
+    regs->useresp = sp;
     
     return 0;
 }

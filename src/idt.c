@@ -136,23 +136,27 @@ void isr_handler(struct registers* regs) {
     }
 
     if (regs->int_no < 32) {
+        if (regs->int_no == 14) {
+            uint32_t cr2;
+            __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+            extern void paging_page_fault_handler(uint32_t, uint32_t, struct registers*);
+            paging_page_fault_handler(cr2, regs->err_code, regs);
+            return;
+        }
+        
         terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_RED));
         terminal_writestring("\n*** EXCEPTION ");
         if (regs->int_no < 20)
             terminal_writestring(exception_names[regs->int_no]);
         terminal_writestring(" — system halted ***\n");
+        
+        outb(0x3f8 + 1, 0x00); outb(0x3f8 + 3, 0x80); outb(0x3f8 + 0, 0x03); outb(0x3f8 + 1, 0x00);
+        outb(0x3f8 + 3, 0x03); outb(0x3f8 + 2, 0xC7); outb(0x3f8 + 4, 0x0B);
+
         com1_print("\n*** EXCEPTION ");
         com1_print_hex(regs->int_no);
         com1_print(" ***\n");
-        if (regs->int_no == 14) {
-            uint32_t cr2;
-            __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
-            /* Try COW/swap handler before giving up */
-            extern void paging_page_fault_handler(uint32_t, uint32_t);
-            paging_page_fault_handler(cr2, regs->err_code);
-            /* If handler returned, the fault was resolved — return to faulting code */
-            return;
-        }
+
         com1_print("EIP: "); com1_print_hex(regs->eip); com1_print("\n");
         terminal_printf("EIP: 0x%x, CS: 0x%x, EFLAGS: 0x%x\n", regs->eip, regs->cs, regs->eflags); com1_print("EIP: "); com1_print_hex(regs->eip); com1_print("\n");
         terminal_printf("EAX: 0x%x, EBX: 0x%x, ECX: 0x%x, EDX: 0x%x\n", regs->eax, regs->ebx, regs->ecx, regs->edx);
@@ -163,6 +167,8 @@ void isr_handler(struct registers* regs) {
         for (int i = 0; i < 8; i++) {
             terminal_printf("  [ESP+0x%x] 0x%x\n", i * 4, sp[i]);
         }
+        extern void vesa_swap_buffers(void);
+        vesa_swap_buffers();
         for (;;) __asm__ volatile ("cli; hlt");
     }
 }

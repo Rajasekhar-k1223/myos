@@ -62,7 +62,7 @@ static int sb16_present = 0;
 // lives well below the 16 MB ceiling.
 
 #define PCM_BUF_SIZE 65536
-static uint8_t dma_buf[PCM_BUF_SIZE] __attribute__((aligned(PCM_BUF_SIZE)));
+uint8_t dma_buf[PCM_BUF_SIZE] __attribute__((aligned(PCM_BUF_SIZE)));
 
 static const uint8_t* pcm_src      = 0;  // caller's sample pointer
 static uint32_t       pcm_len      = 0;  // total sample count

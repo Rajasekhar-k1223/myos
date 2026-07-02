@@ -15,10 +15,7 @@ static uint32_t          pit_hz          = 100;
 
 static void pit_callback(struct registers* r) {
     (void)r;
-    extern void com1_print(const char*);
-    com1_print("?");
     if (apic_get_id() == bsp_apic_id) {
-        com1_print("!");
         pit_ticks++;
         if (!sched_active) return;
         task_tick(); /* decrement sleep counters */

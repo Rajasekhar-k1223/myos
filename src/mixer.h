@@ -25,3 +25,6 @@ void mixer_stop(int channel);
 // Mix active channels and feed the result to SB16.
 // Call from the PIT tick handler or a periodic callback.
 void mixer_tick(void);
+
+// Set master volume
+void mixer_set_volume(uint8_t vol);

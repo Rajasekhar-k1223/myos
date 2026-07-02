@@ -522,7 +522,3 @@ int main(int argc, char **argv)
   }
 }
 
-void _start(void) {
-    char* argv[] = {"c4", "hello.c", 0};
-    exit(main(2, argv));
-}

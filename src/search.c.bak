@@ -1,0 +1,70 @@
+#include "search.h"
+#include "string.h"
+#include "vesa.h"
+
+static int is_open = 0;
+static char search_buf[64] = {0};
+static int search_len = 0;
+
+void search_toggle(void) {
+    is_open = !is_open;
+    if (is_open) {
+        search_len = 0;
+        search_buf[0] = 0;
+    }
+    extern void wm_request_redraw(void);
+    wm_request_redraw();
+}
+
+int search_is_open(void) {
+    return is_open;
+}
+
+void search_render(void) {
+    if (!is_open) return;
+    uint32_t sw = vesa_width;
+    uint32_t sh = vesa_height;
+    
+    // Dim background slightly (we'll just draw a big modal box in the center)
+    uint32_t w = 600;
+    uint32_t h = 400;
+    uint32_t x = (sw - w) / 2;
+    uint32_t y = (sh - h) / 2;
+    
+    vesa_draw_rect(x, y, w, h, 0x1E1E2E);
+    vesa_draw_rect(x + 20, y + 20, w - 40, 40, 0x333333);
+    
+    wm_draw_desktop_text("Global Search", 1.0, x + 20, y - 20, 0xFFFFFF);
+    wm_draw_desktop_text(search_buf, 2.0, x + 30, y + 25, 0xFFFFFF);
+    
+    // Mock results
+    if (search_len > 0) {
+        wm_draw_desktop_text("Matches:", 1.5, x + 20, y + 80, 0x888888);
+        wm_draw_desktop_text("- System Monitor", 1.5, x + 30, y + 120, 0xFFFFFF);
+        wm_draw_desktop_text("- Calendar", 1.5, x + 30, y + 150, 0xFFFFFF);
+    }
+}
+
+void search_handle_keypress(char c) {
+    if (!is_open) return;
+    if (c == '\b') {
+        if (search_len > 0) {
+            search_len--;
+            search_buf[search_len] = 0;
+        }
+    } else if (c == '\n' || c == '\r') {
+        // execute (mock)
+        search_toggle();
+    } else if (c >= 32 && c <= 126 && search_len < 63) {
+        search_buf[search_len++] = c;
+        search_buf[search_len] = 0;
+    }
+    extern void wm_request_redraw(void);
+    wm_request_redraw();
+}
+
+void search_handle_click(int mx, int my) {
+    (void)mx; (void)my;
+    // close if clicked outside
+    search_toggle();
+}

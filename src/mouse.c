@@ -89,11 +89,17 @@ static void mouse_callback(struct registers* regs) {
                     if (rel_x && (mouse_byte[0] & (1 << 4))) rel_x -= 256;
                     if (rel_y && (mouse_byte[0] & (1 << 5))) rel_y -= 256;
                     
+                    // Simple acceleration curve for speed and accuracy
+                    int ax = rel_x;
+                    int ay = rel_y;
+                    if (ax > 3 || ax < -3) ax = (ax * 3) / 2;
+                    if (ay > 3 || ay < -3) ay = (ay * 3) / 2;
+                    
                     int z_delta = 0;
                     if (mouse_has_wheel) {
                         z_delta = (int8_t)mouse_byte[3];
                     }
-                    mouse_handler_inject(rel_x, rel_y, z_delta, buttons);
+                    mouse_handler_inject(ax, ay, z_delta, buttons);
                 }
                 break;
         }
@@ -157,4 +163,41 @@ void mouse_init(void) {
     mouse_write(0xF4); // Enable streaming
     
     register_interrupt_handler(44, mouse_callback);
+}
+
+void mouse_handler_inject_absolute(int x, int y, uint8_t buttons) {
+    extern uint32_t vesa_width, vesa_height;
+    int rel_x = x - mouse_x;
+    int rel_y = -(y - mouse_y); // Y is inverted in relative
+    
+    mouse_x = x;
+    mouse_y = y;
+    mouse_buttons = buttons;
+    
+    if (mouse_x < 0) mouse_x = 0;
+    if (mouse_y < 0) mouse_y = 0;
+    if (mouse_x > (int)vesa_width - 1) mouse_x = vesa_width - 1;
+    if (mouse_y > (int)vesa_height - 1) mouse_y = vesa_height - 1;
+    
+    extern int sdl_app_active;
+    if (sdl_app_active) {
+        extern void sdl_push_mousemove(int x, int y, int dx, int dy);
+        extern void sdl_push_mousebutton(int down, uint8_t button, int x, int y);
+        
+        sdl_push_mousemove(mouse_x, mouse_y, rel_x, -rel_y);
+        
+        static uint8_t last_buttons = 0;
+        if ((buttons & 1) && !(last_buttons & 1)) sdl_push_mousebutton(1, 1, mouse_x, mouse_y);
+        if (!(buttons & 1) && (last_buttons & 1)) sdl_push_mousebutton(0, 1, mouse_x, mouse_y);
+        if ((buttons & 2) && !(last_buttons & 2)) sdl_push_mousebutton(1, 3, mouse_x, mouse_y);
+        if (!(buttons & 2) && (last_buttons & 2)) sdl_push_mousebutton(0, 3, mouse_x, mouse_y);
+        if ((buttons & 4) && !(last_buttons & 4)) sdl_push_mousebutton(1, 2, mouse_x, mouse_y);
+        if (!(buttons & 4) && (last_buttons & 4)) sdl_push_mousebutton(0, 2, mouse_x, mouse_y);
+        
+        last_buttons = buttons;
+        return;
+    }
+
+    extern void wm_request_redraw(void);
+    wm_request_redraw();
 }

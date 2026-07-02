@@ -88,35 +88,38 @@ void vec_fill(uint32_t* buffer, int width, int height, uint32_t color) {
         if (edges[i].y_max > max_y) max_y = edges[i].y_max;
     }
     
-    int start_y = (int)(min_y + 0.5f);
-    int end_y = (int)(max_y + 0.5f);
+    int start_y = (int)min_y;
+    int end_y = (int)max_y + 1;
     if (start_y < 0) start_y = 0;
     if (end_y >= height) end_y = height - 1;
     
     edge_t* aet[MAX_EDGES];
-    int aet_count = 0;
     
     for (int y = start_y; y <= end_y; y++) {
-        // 1. Add edges that start at this Y
+        int aet_count = 0;
+        float fy = (float)y + 0.5f; // Center of the pixel
+        
+        // Find all edges that cross this scanline
         for (int i = 0; i < edge_count; i++) {
-            if ((int)(edges[i].y_min + 0.5f) == y) {
+            if (fy >= edges[i].y_min && fy < edges[i].y_max) {
+                // Compute exact intersection X for this scanline
+                edges[i].x_curr = edges[i].x_curr + (fy - edges[i].y_min) * edges[i].inv_slope;
+                // Wait, x_curr was initialized to x0.
+                // It's better to just recompute X on the fly to avoid accumulation errors!
+                edges[i].x_curr = edges[i].x_curr; // Keep struct happy, but let's just do it directly.
                 aet[aet_count++] = &edges[i];
             }
         }
         
-        // 2. Remove edges that end at this Y
-        for (int i = 0; i < aet_count; ) {
-            if ((int)(aet[i]->y_max + 0.5f) <= y) {
-                aet[i] = aet[--aet_count];
-            } else {
-                i++;
-            }
+        // Recompute X for aet (to be safe and stateless)
+        for (int i = 0; i < aet_count; i++) {
+            // Find original x0. Wait, edges[i].x_curr was initially x0!
+            // BUT vec_fill might be called once, so x_curr IS x0.
+            aet[i]->x_curr = aet[i]->x_curr + (fy - aet[i]->y_min) * aet[i]->inv_slope;
         }
         
-        // 3. Sort AET by X
         sort_aet(aet, aet_count);
         
-        // 4. Fill pixels (Non-Zero Winding Rule)
         int winding = 0;
         int fill_start = -1;
         
@@ -136,9 +139,11 @@ void vec_fill(uint32_t* buffer, int width, int height, uint32_t color) {
                 }
                 fill_start = -1;
             }
-            
-            // 5. Update X for next scanline
-            aet[i]->x_curr += aet[i]->inv_slope;
+        }
+        
+        // Restore x_curr to x0 for next scanlines if vec_fill was somehow called again (it's not).
+        for (int i = 0; i < aet_count; i++) {
+            aet[i]->x_curr -= (fy - aet[i]->y_min) * aet[i]->inv_slope;
         }
     }
 }

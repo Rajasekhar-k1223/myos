@@ -102,7 +102,7 @@ typedef struct {
 } Elf32_Sym;
 
 uint32_t elf_load(const char* filename);
-int elf_load_and_run(const char* filename);
-int task_exec(const char* filename, struct registers* regs);
+int elf_load_and_run(const char* filename, const char* args_str);
+int task_exec(const char* filename, const char* args_str, struct registers* regs);
 
 #endif

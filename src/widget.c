@@ -347,8 +347,8 @@ void widget_textinput_draw(int x, int y, int w, widget_textinput_t* t, uint32_t 
         scroll = t->cursor - (max_chars - 1);
 
     for (int i = scroll; i < t->len && (i - scroll) < max_chars; i++) {
-        _draw_char(text_x + (i - scroll) * 8, text_y,
-                   (unsigned char)t->buf[i], 0xDDEEFF, 230);
+        unsigned char ch = t->is_password ? (unsigned char)'*' : (unsigned char)t->buf[i];
+        _draw_char(text_x + (i - scroll) * 8, text_y, ch, 0xDDEEFF, 230);
     }
 
     // Blinking cursor when focused
@@ -504,4 +504,49 @@ int widget_splitter_handle(widget_splitter_t* s, int mx, int my,
 
     (void)mx; (void)on_bar;
     return s->split_y;
+}
+
+// ─── Tab Widget ───────────────────────────────────────────────────────────────
+
+void widget_tab_init(widget_tab_t* t) {
+    t->num_tabs = 0;
+    t->active_tab = 0;
+}
+
+void widget_tab_add(widget_tab_t* t, const char* title) {
+    if (t->num_tabs >= WIDGET_TAB_MAX) return;
+    int i = 0;
+    while (title[i] && i < 31) {
+        t->tabs[t->num_tabs][i] = title[i];
+        i++;
+    }
+    t->tabs[t->num_tabs][i] = '\0';
+    t->num_tabs++;
+}
+
+void widget_tab_draw(int x, int y, int w, widget_tab_t* t, uint32_t bg, uint32_t active_bg, uint32_t fg) {
+    if (t->num_tabs == 0) return;
+    int tab_w = w / t->num_tabs;
+    for (int i = 0; i < t->num_tabs; i++) {
+        uint32_t c_bg = (i == t->active_tab) ? active_bg : bg;
+        widget_draw_rounded_rect(x + i * tab_w, y, tab_w - 2, 24, 4, c_bg, 255);
+        _draw_string(x + i * tab_w + 10, y + 4, t->tabs[i], fg, 255);
+    }
+}
+
+int widget_tab_click(int x, int y, int w, widget_tab_t* t, int mx, int my) {
+    if (t->num_tabs == 0) return 0;
+    int tab_w = w / t->num_tabs;
+    if (my >= y && my <= y + 24) {
+        for (int i = 0; i < t->num_tabs; i++) {
+            int tx = x + i * tab_w;
+            if (mx >= tx && mx <= tx + tab_w - 2) {
+                if (t->active_tab != i) {
+                    t->active_tab = i;
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
 }

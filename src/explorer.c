@@ -2,6 +2,8 @@
 #include "fs.h"
 #include "fat16.h"
 #include "string.h"
+#include "imgview.h"
+#include "textedit.h"
 
 /* 0 = RAM disk (initrd), 1 = FAT16 disk */
 static int fat_mode = 0;
@@ -117,20 +119,26 @@ void explorer_handle_click(window_t* win, int mx, int my) {
             int px = 8  + col * 90;
             int py = 42 + row * 72;
             if (lx >= px && lx <= px + 28 && ly >= py && ly <= py + 36) {
-                char data[512] = {0};
-                if (fs_read_file(files[i].name, data) == 0) {
-                    char title[80]; strcpy(title, "Notepad - ");
+                // Determine file extension
+                const char* ext = strrchr(files[i].name, '.');
+                if (ext && (strcmp(ext, ".bmp") == 0 || strcmp(ext, ".jpg") == 0 || strcmp(ext, ".png") == 0)) {
+                    // Open in ImageView
+                    char title[80]; strcpy(title, "ImageView - ");
                     strncat(title, files[i].name, 63);
-                    window_t* tw = wm_create_window(220, 160, 400, 300, title);
-                    if (tw)
-                        for (size_t j = 0; j < strlen(data); j++)
-                            wm_putchar(tw, data[j]);
+                    window_t* tw = wm_create_window(150, 100, 600, 450, title);
+                    if (tw) imgview_init(tw, files[i].name);
+                } else {
+                    // Default to TextEdit
+                    char title[80]; strcpy(title, "TextEdit - ");
+                    strncat(title, files[i].name, 63);
+                    window_t* tw = wm_create_window(220, 160, 600, 400, title);
+                    if (tw) textedit_init(tw, files[i].name);
                 }
                 return;
             }
         }
     } else {
-        /* FAT16 file click → open in Notepad */
+        /* FAT16 file click → open according to extension */
         fat16_file_info_t fnames[64];
         int num = fat16_list_files(fnames, 64);
         for (int i = 0; i < num; i++) {
@@ -138,15 +146,17 @@ void explorer_handle_click(window_t* win, int mx, int my) {
             int px = 8  + col * 90;
             int py = 42 + row * 72;
             if (lx >= px && lx <= px + 28 && ly >= py && ly <= py + 36) {
-                static uint8_t _rbuf[8192];
-                int r = fat16_read_file(fnames[i].name, _rbuf, sizeof(_rbuf));
-                if (r > 0) {
-                    char title[80]; strcpy(title, "Notepad - ");
+                const char* ext = strrchr(fnames[i].name, '.');
+                if (ext && (strcmp(ext, ".bmp") == 0 || strcmp(ext, ".jpg") == 0 || strcmp(ext, ".png") == 0)) {
+                    char title[80]; strcpy(title, "ImageView - ");
                     strncat(title, fnames[i].name, 63);
-                    window_t* tw = wm_create_window(220, 160, 400, 300, title);
-                    if (tw)
-                        for (int j = 0; j < r; j++)
-                            wm_putchar(tw, (char)_rbuf[j]);
+                    window_t* tw = wm_create_window(150, 100, 600, 450, title);
+                    if (tw) imgview_init(tw, fnames[i].name);
+                } else {
+                    char title[80]; strcpy(title, "TextEdit - ");
+                    strncat(title, fnames[i].name, 63);
+                    window_t* tw = wm_create_window(220, 160, 600, 400, title);
+                    if (tw) textedit_init(tw, fnames[i].name);
                 }
                 return;
             }

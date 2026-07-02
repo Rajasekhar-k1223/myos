@@ -16,5 +16,6 @@ void wifi_init(void);
 int  wifi_scan(wifi_network_t* networks, int max_networks);
 int  wifi_connect(const char* ssid, const char* password);
 int  wifi_disconnect(void);
+int  wifi_is_connected(void);
 
 #endif

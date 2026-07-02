@@ -67,8 +67,9 @@ int  widget_combobox_click(int x, int y, int w, const char** items, int item_cou
 typedef struct {
     char    buf[128];
     int     len;
-    int     cursor;   // cursor position in buf (0..len)
+    int     cursor;      /* cursor position in buf (0..len) */
     int     focused;
+    int     is_password; /* draw '*' instead of actual chars when 1 */
 } widget_textinput_t;
 
 void widget_textinput_init(widget_textinput_t* t);
@@ -92,5 +93,20 @@ void widget_splitter_draw(int x, int y, int w, widget_splitter_t* s, int accent_
 // Process mouse event; returns new split_y value.
 int  widget_splitter_handle(widget_splitter_t* s, int mx, int my,
                             int mouse_down, int total_h);
+
+// ─── Tab Widget ───────────────────────────────────────────────────────────────
+
+#define WIDGET_TAB_MAX 8
+
+typedef struct {
+    char tabs[WIDGET_TAB_MAX][32];
+    int  num_tabs;
+    int  active_tab;
+} widget_tab_t;
+
+void widget_tab_init(widget_tab_t* t);
+void widget_tab_add(widget_tab_t* t, const char* title);
+void widget_tab_draw(int x, int y, int w, widget_tab_t* t, uint32_t bg, uint32_t active_bg, uint32_t fg);
+int  widget_tab_click(int x, int y, int w, widget_tab_t* t, int mx, int my);
 
 #endif

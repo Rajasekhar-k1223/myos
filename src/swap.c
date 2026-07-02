@@ -108,10 +108,10 @@ int swap_out(uint32_t virt_addr, uint32_t phys_addr) {
     }
 
     /* Update PTE: mark not-present, set bit9, encode slot in bits 31:12 */
-    extern uint32_t* current_page_directory;
+    extern uint32_t* paging_get_current_dir();
     uint32_t pde_idx = virt_addr >> 22;
     uint32_t pte_idx = (virt_addr >> 12) & 0x3FF;
-    uint32_t* pd = current_page_directory;
+    uint32_t* pd = paging_get_current_dir();
 
     if (!(pd[pde_idx] & 1)) return -1;
     uint32_t* pt = (uint32_t*)(pd[pde_idx] & ~0xFFF);
@@ -136,10 +136,10 @@ int swap_out(uint32_t virt_addr, uint32_t phys_addr) {
 int swap_in(uint32_t virt_addr) {
     if (!swap_available) return -1;
 
-    extern uint32_t* current_page_directory;
+    extern uint32_t* paging_get_current_dir();
     uint32_t pde_idx = virt_addr >> 22;
     uint32_t pte_idx = (virt_addr >> 12) & 0x3FF;
-    uint32_t* pd = current_page_directory;
+    uint32_t* pd = paging_get_current_dir();
 
     if (!(pd[pde_idx] & 1)) {
         terminal_printf("[SWAP] swap_in: PDE not present for 0x%x\n", virt_addr);

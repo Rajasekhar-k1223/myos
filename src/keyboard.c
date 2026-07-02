@@ -31,8 +31,30 @@ static const char sc_ascii_shift[] = {
 static int shift_held = 0;
 static int ctrl_held = 0;
 
+/* Polled key ring buffer — used by installer and other non-IRQ consumers */
+#define KEY_RING_SIZE 64
+static volatile char  key_ring[KEY_RING_SIZE];
+static volatile int   key_ring_head = 0;
+static volatile int   key_ring_tail = 0;
+
+void keyboard_push_char(char c) {
+    int next = (key_ring_head + 1) % KEY_RING_SIZE;
+    if (next != key_ring_tail) {
+        key_ring[key_ring_head] = c;
+        key_ring_head = next;
+    }
+}
+
+char keyboard_poll_char(void) {
+    if (key_ring_head == key_ring_tail) return 0;
+    char c = key_ring[key_ring_tail];
+    key_ring_tail = (key_ring_tail + 1) % KEY_RING_SIZE;
+    return c;
+}
+
 void keyboard_handler_inject(char c) {
     if (!c) return;
+    keyboard_push_char(c); /* always feed polled buffer */
     extern int snake_handle_input(char c);
     extern int wm_handle_keypress(char c);
     extern int wm_handle_shortcut(char c);

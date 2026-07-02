@@ -32,24 +32,39 @@ void usb_hid_poll(void) {
 
         /* Attempt to read 8-byte HID keyboard report */
         memset(hid_buf, 0, sizeof(hid_buf));
-        int r = usb_bulk_in(dev->addr, dev->ep_in, hid_buf, 8);
+        int r = usb_bulk_in(dev->addr, dev->ep_in, hid_buf, 8, 2); // 2ms timeout to allow HC to poll
         if (r != 0) continue;
 
-        /* Compare with previous report to find new key-presses */
-        for (int k = 2; k < 8; k++) {
-            uint8_t kc = hid_buf[k];
-            if (kc == 0) continue;
+        if (dev->vendor_id == 0x0627 && dev->product_id == 0x0001) {
+            /* QEMU USB Tablet */
+            uint8_t btn = hid_buf[0];
+            uint16_t abs_x = hid_buf[1] | (hid_buf[2] << 8);
+            uint16_t abs_y = hid_buf[3] | (hid_buf[4] << 8);
+            
+            extern uint32_t vesa_width, vesa_height;
+            /* Tablet reports absolute X/Y in 0-0x7FFF range */
+            int screen_x = (abs_x * vesa_width) / 0x7FFF;
+            int screen_y = (abs_y * vesa_height) / 0x7FFF;
+            
+            extern void mouse_handler_inject_absolute(int x, int y, uint8_t buttons);
+            mouse_handler_inject_absolute(screen_x, screen_y, btn);
+        } else {
+            /* Compare with previous report to find new key-presses */
+            for (int k = 2; k < 8; k++) {
+                uint8_t kc = hid_buf[k];
+                if (kc == 0) continue;
 
-            /* Check if this keycode was already pressed */
-            int already = 0;
-            for (int p = 2; p < 8; p++) {
-                if (prev_buf[p] == kc) { already = 1; break; }
+                /* Check if this keycode was already pressed */
+                int already = 0;
+                for (int p = 2; p < 8; p++) {
+                    if (prev_buf[p] == kc) { already = 1; break; }
+                }
+                if (already) continue;
+
+                /* Translate keycode to ASCII (kc is uint8_t, always < 256) */
+                char c = hid_keycode_ascii[kc];
+                if (c) terminal_putchar(c);
             }
-            if (already) continue;
-
-            /* Translate keycode to ASCII (kc is uint8_t, always < 256) */
-            char c = hid_keycode_ascii[kc];
-            if (c) terminal_putchar(c);
         }
 
         memcpy(prev_buf, hid_buf, sizeof(hid_buf));

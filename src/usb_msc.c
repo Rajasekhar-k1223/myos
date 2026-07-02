@@ -49,7 +49,7 @@ static int msc_bulk_out(uint8_t dev_addr, uint8_t ep, const void* buf, uint32_t 
 }
 
 static int msc_bulk_in(uint8_t dev_addr, uint8_t ep, void* buf, uint32_t len) {
-    return usb_bulk_in(dev_addr, ep, buf, (uint16_t)len);
+    return usb_bulk_in(dev_addr, ep, buf, (uint16_t)len, 1000); // 1 sec timeout for MSC
 }
 
 /* ── Internal helpers ─────────────────────────────────────────────────────── */

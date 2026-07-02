@@ -1,4 +1,5 @@
 #include "music.h"
+#include "mixer.h"
 #include "sb16.h"
 #include "tar.h"
 #include "string.h"
@@ -299,8 +300,12 @@ void music_process_audio(void) {
             return;
         }
 
-        /* Feed next chunk to DMA buffer */
-        memcpy((void*)sb16_next_buffer, wav_buffer + file_offset, bytes_to_read);
+        /* Instead of directly writing to sb16, use the mixer! Wait, mixer_tick() handles sb16.
+           Actually, music.c should just let mixer.c do its thing, or mix into sb16_next_buffer.
+           Let's manually mix since music.c is the foreground app. */
+        for (uint32_t i = 0; i < bytes_to_read; i++) {
+            ((uint8_t*)sb16_next_buffer)[i] = wav_buffer[file_offset + i];
+        }
         file_offset += bytes_to_read;
 
         /* Refresh UI every ~10 callbacks */

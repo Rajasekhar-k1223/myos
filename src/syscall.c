@@ -32,7 +32,7 @@ static struct open_file open_files[16] = {0};
 // System call handler
 static void syscall_handler(struct registers* regs) {
     extern void syscall_handler_dbg(struct registers* regs);
-    syscall_handler_dbg(regs);
+    // syscall_handler_dbg(regs);
     
     uint32_t syscall_no = regs->eax;
 
@@ -60,7 +60,8 @@ static void syscall_handler(struct registers* regs) {
         }
         case 3: { // sys_exec
             const char* path = (const char*)regs->ebx;
-            regs->eax = task_exec(path, regs);
+            const char* args = (const char*)regs->ecx;
+            regs->eax = task_exec(path, args, regs);
             break;
         }
         case 4: { // sys_read_file(name, buf, max_size) -> bytes_read
@@ -102,6 +103,7 @@ static void syscall_handler(struct registers* regs) {
                 paging_map_page(cur_mmap->mmap_next, (uint32_t)frame, 7);
                 cur_mmap->mmap_next += 4096;
             }
+            asm volatile("mov %%cr3, %%eax; mov %%eax, %%cr3" ::: "eax", "memory");
             regs->eax = ret;
             mmap_done:;
             break;
@@ -470,6 +472,111 @@ static void syscall_handler(struct registers* regs) {
                     break;
                 }
             }
+            break;
+        }
+        case 36: { // sys_ls()
+            extern void tar_ls(void);
+            tar_ls();
+            regs->eax = 0;
+            break;
+        }
+        case 37: { // sys_mmap_fb
+            extern uint32_t vesa_get_fb_addr(void);
+            extern uint32_t vesa_get_fb_size(void);
+            task_t* cur_mmap = task_current();
+            uint32_t ret   = cur_mmap->mmap_next;
+            uint32_t fb_phys = vesa_get_fb_addr();
+            uint32_t fb_size = vesa_get_fb_size();
+            uint32_t pages = (fb_size + 4095) / 4096;
+
+            for (uint32_t i = 0; i < pages; i++) {
+                paging_map_page(cur_mmap->mmap_next, fb_phys + (i * 4096), 7);
+                cur_mmap->mmap_next += 4096;
+            }
+            asm volatile("mov %%cr3, %%eax; mov %%eax, %%cr3" ::: "eax", "memory");
+            regs->eax = ret;
+            break;
+        }
+        case 38: { // sys_get_fb_info
+            extern uint32_t vesa_width;
+            extern uint32_t vesa_height;
+            uint32_t* info = (uint32_t*)regs->ebx;
+            if (info) {
+                info[0] = vesa_width;
+                info[1] = vesa_height;
+                info[2] = vesa_width * 4;
+                info[3] = 32;
+            }
+            regs->eax = 0;
+            break;
+        }
+        case 39: { // sys_read_event
+            uint32_t type = regs->ebx;
+            uint32_t* ev = (uint32_t*)regs->ecx;
+            if (type == 1 && ev) { // keyboard
+                extern char keyboard_poll_char(void);
+                ev[0] = (uint32_t)keyboard_poll_char();
+                regs->eax = ev[0] ? 1 : 0;
+            } else if (type == 2 && ev) { // mouse
+                extern int32_t mouse_get_x(void);
+                extern int32_t mouse_get_y(void);
+                extern uint8_t mouse_get_buttons(void);
+                ev[0] = (uint32_t)mouse_get_x();
+                ev[1] = (uint32_t)mouse_get_y();
+                ev[2] = (uint32_t)mouse_get_buttons();
+                regs->eax = 1;
+            } else {
+                regs->eax = 0;
+            }
+            break;
+        }
+        case 40: { // sys_spawn(filename, args)
+            const char* fname = (const char*)(uintptr_t)regs->ebx;
+            const char* args  = (const char*)(uintptr_t)regs->ecx;
+            extern int elf_load_and_run(const char*, const char*);
+            regs->eax = (uint32_t)elf_load_and_run(fname, args);
+            break;
+        }
+        case 41: { // sys_getpid() — alias for apps
+            regs->eax = (uint32_t)task_getpid();
+            break;
+        }
+        case 42: { // sys_msgsnd2(qid, buf, size) — with type already in buf
+            extern int ipc_msgsnd(int, const void*, uint32_t, int);
+            int qid = (int)regs->ebx;
+            const void* buf = (const void*)(uintptr_t)regs->ecx;
+            uint32_t sz = regs->edx;
+            regs->eax = (uint32_t)ipc_msgsnd(qid, buf, sz, 0);
+            break;
+        }
+        case 43: { // sys_msgrcv2(qid, buf, size, type) — non-blocking
+            extern int ipc_msgrcv(int, void*, uint32_t, long, int);
+            int qid = (int)regs->ebx;
+            void* buf = (void*)(uintptr_t)regs->ecx;
+            uint32_t sz = regs->edx;
+            long mtype = (long)regs->esi;
+            regs->eax = (uint32_t)ipc_msgrcv(qid, buf, sz, mtype, 1); /* IPC_NOWAIT */
+            break;
+        }
+        case 44: { // sys_mmap_audio()
+            /* Map the 64KB dma_buf to 0x40000000 */
+            extern void paging_map_page(uint32_t virt, uint32_t phys, uint32_t flags);
+            extern uint8_t dma_buf[];
+            
+            uint32_t audio_phys = (uint32_t)dma_buf;
+            uint32_t virt = 0x40000000;
+            for (uint32_t i = 0; i < 16; i++) {
+                paging_map_page(virt + i*4096, audio_phys + i*4096, 7); /* User, RW, Present */
+            }
+            regs->eax = virt;
+            break;
+        }
+        case 45: { // sys_audio_play(len, loop)
+            extern int sb16_play_pcm(const uint8_t* samples, uint32_t num_samples, int loop);
+            extern uint8_t dma_buf[];
+            
+            /* Since userspace wrote directly into dma_buf, we just tell sb16 to play it! */
+            regs->eax = sb16_play_pcm(dma_buf, regs->ebx, regs->ecx);
             break;
         }
         default:

@@ -9,8 +9,7 @@ int close(int fd);
 int printf(const char* format, ...);
 int waitpid(int pid);
 
-void _start() {
-    write(2, "test_pipe starting\n", 19);
+int main(int argc, char** argv) {
     int p[2];
     if (pipe(p) < 0) {
         printf("Failed to create pipe\n");

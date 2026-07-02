@@ -6,6 +6,7 @@
 #include "widget.h"
 #include "tcp.h"
 #include "dns.h"
+#include "ssl.h"
 #include "string.h"
 #include "kernel.h"
 #include "ttf.h"
@@ -45,6 +46,7 @@
 
 // ─── State ────────────────────────────────────────────────────────────────────
 window_t* browser_win = NULL;
+widget_tab_t browser_tabs;
 
 static char  url_bar[MAX_URL]  = "10.0.2.2";
 static int   url_len           = 8;
@@ -62,7 +64,7 @@ static int   hist_top  = 0;  // points one past the current entry
 static int   hist_cur  = -1; // current index in history (-1 = none)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-static int content_y_start(void) { return TOOLBAR_H; }
+static int content_y_start(void) { return TOOLBAR_H + 24; }
 static int content_y_end(void)   { return (int)browser_win->h - STATUS_H; }
 static int content_w(void)       { return (int)browser_win->w - SCROLLBAR_W; }
 static int content_h(void)       { return content_y_end() - content_y_start(); }
@@ -83,8 +85,9 @@ static void fill_rect(int x, int y, int w, int h, uint32_t col) {
 // Draw text clipped to window (offset by scroll for content area)
 static void draw_text(int x, int y, const char* s, int size, uint32_t col) {
     if (!browser_win || !s || !*s) return;
+    extern uint32_t strlen(const char*);
     ttf_draw_string(browser_win->buffer, browser_win->w, browser_win->h,
-                    x, y, s, size, col);
+                    x, y, s, strlen(s), size, col);
 }
 
 // Draw a horizontal gradient bar
@@ -309,6 +312,7 @@ static void draw_status(void) {
 void browser_render(void) {
     if (!browser_win) return;
     draw_toolbar();
+    widget_tab_draw(0, TOOLBAR_H, browser_win->w, &browser_tabs, 0x1E1E1E, 0x333333, 0xFFFFFF);
     content_height = render_html(0);
     draw_scrollbar();
     draw_status();
@@ -336,18 +340,51 @@ static void do_navigate(void) {
     strcpy(status_msg, "Connecting...");
     browser_render();
 
-    /* HTTPS: show informational fallback page */
+    /* HTTPS: real TLS 1.2 via ssl.c (DHE-AES256-CBC-SHA256) */
     if (strncmp(url_bar, "https://", 8) == 0) {
-        const char* host = url_bar + 8;
-        strcpy(html_buf,
-            "<h1>HTTPS Not Supported</h1>"
-            "<p>ElseaOS browser supports HTTP only.</p>"
-            "<p>TLS/SSL requires a cryptography library not included in the kernel.</p>"
-            "<p>Try: <b>http://");
-        strncat(html_buf, host, 180);
-        strcat(html_buf, "</b></p>");
-        strcpy(status_msg, "HTTPS not supported");
+        const char* host_start = url_bar + 8;
+        /* Strip any path for the hostname */
+        char host_only[MAX_URL] = {0};
+        int hi = 0;
+        while (host_start[hi] && host_start[hi] != '/' && hi < MAX_URL - 1) {
+            host_only[hi] = host_start[hi]; hi++;
+        }
+        host_only[hi] = '\0';
+
+        strcpy(status_msg, "TLS handshake...");
+        browser_render();
+        int ssl_sock = ssl_connect(host_only, 443);
+        if (ssl_sock >= 0) {
+            char req[512];
+            strcpy(req, "GET / HTTP/1.0\r\nHost: ");
+            strcat(req, host_only);
+            strcat(req, "\r\nConnection: close\r\n\r\n");
+            ssl_send(ssl_sock, req, strlen(req));
+            static char ssl_resp[MAX_HTML];
+            int rlen = ssl_receive(ssl_sock, ssl_resp, MAX_HTML - 1);
+            if (rlen > 0) {
+                ssl_resp[rlen] = '\0';
+                /* Skip HTTP headers */
+                char* body = ssl_resp;
+                char* hdr_end = strstr(ssl_resp, "\r\n\r\n");
+                if (hdr_end) body = hdr_end + 4;
+                strncpy(html_buf, body, MAX_HTML - 1);
+                html_buf[MAX_HTML - 1] = '\0';
+                strcpy(status_msg, "HTTPS OK (TLS 1.2)");
+            } else {
+                strcpy(html_buf, "<h1>HTTPS Error</h1><p>No data received from server.</p>");
+                strcpy(status_msg, "HTTPS: no response");
+            }
+        } else {
+            strcpy(html_buf,
+                "<h1>TLS Connection Failed</h1>"
+                "<p>Could not establish secure connection to <b>");
+            strncat(html_buf, host_only, 100);
+            strcat(html_buf, "</b></p><p>Server may be unreachable.</p>");
+            strcpy(status_msg, "TLS failed");
+        }
         is_loading = 0;
+        content_height = render_html(0);
         browser_render();
         return;
     }
@@ -415,24 +452,27 @@ static void do_navigate(void) {
 
     scroll_y = 0;
 
-    if (tcp_connect(ip, port) >= 0) {
+    int conn_id = tcp_connect(ip, port);
+    if (conn_id >= 0) {
         char req[512];
-        strcpy(req, "GET / HTTP/1.1\r\nHost: ");
+        strcpy(req, "GET / HTTP/1.0\r\nHost: ");
         strcat(req, url_bar);
         strcat(req, "\r\nConnection: close\r\n\r\n");
-        tcp_send_data((uint8_t*)req, strlen(req));
+        tcp_send(conn_id, (uint8_t*)req, strlen(req));
 
         strcpy(status_msg, "Waiting for response...");
         browser_render();
 
-        uint32_t timeout = pit_get_ticks() + 6000;
-        while (!tcp_has_data && pit_get_ticks() < timeout) {}
+        uint8_t buf[MAX_HTML];
+        int len = tcp_recv(conn_id, buf, MAX_HTML - 1, 6000);
+        tcp_close(conn_id);
 
-        if (tcp_has_data) {
+        if (len > 0) {
+            buf[len] = '\0';
             // Skip HTTP headers
-            char* body = strstr((char*)tcp_recv_buffer, "\r\n\r\n");
+            char* body = strstr((char*)buf, "\r\n\r\n");
             if (body) body += 4;
-            else       body = (char*)tcp_recv_buffer;
+            else       body = (char*)buf;
 
             strncpy(html_buf, body, MAX_HTML - 1);
             html_buf[MAX_HTML - 1] = '\0';
@@ -463,6 +503,11 @@ static void do_navigate(void) {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 void browser_init(window_t* win) {
     browser_win = win;
+    
+    widget_tab_init(&browser_tabs);
+    widget_tab_add(&browser_tabs, "New Tab");
+    widget_tab_add(&browser_tabs, "Search");
+    
     strcpy(html_buf,
         "<h1>Welcome to Netscape Elsea</h1>"
         "<p>Type an IP address in the bar above and click <b>Go</b>.</p>"
@@ -486,6 +531,16 @@ void browser_handle_click(int mx, int my) {
     int lx = mx - (int)browser_win->x;
     int ly = my - (int)browser_win->y;
     int bw = (int)browser_win->w;
+
+    if (ly >= TOOLBAR_H && ly < TOOLBAR_H + 24) {
+        if (widget_tab_click(0, TOOLBAR_H, bw, &browser_tabs, lx, ly)) {
+            // Re-render when tab changes
+            browser_render();
+            extern void wm_request_redraw(void);
+            wm_request_redraw();
+        }
+        return;
+    }
 
     if (ly >= 0 && ly < TOOLBAR_H) {
         // Back button

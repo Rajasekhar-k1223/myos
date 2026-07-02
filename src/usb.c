@@ -110,7 +110,7 @@ static int usb_exec_qh(uhci_qh_t* qh, uhci_td_t* first_td, uint32_t timeout_ms) 
         }
 
         if (pit_get_ticks() >= deadline) {
-            terminal_printf("[USB] Transfer timeout\n");
+            // terminal_printf("[USB] Transfer timeout\n");
             result = -1;
             break;
         }
@@ -351,19 +351,21 @@ void usb_enumerate_device(uint8_t port) {
 }
 
 /* ── Bulk IN ───────────────────────────────────────────────────────────────── */
-int usb_bulk_in(uint8_t dev_addr, uint8_t ep, void* buf, uint16_t len) {
+static uint8_t bulk_in_toggle[128][16];
+static uint8_t bulk_out_toggle[128][16];
+
+int usb_bulk_in(uint8_t dev_addr, uint8_t ep, void* buf, uint16_t len, int timeout_ms) {
     if (!buf || len == 0) return -1;
 
     uint8_t*   dst    = (uint8_t*)buf;
     uint16_t   remain = len;
-    uint8_t    toggle = 1;       /* bulk starts at DATA1 */
     uhci_td_t* first  = 0;
     uhci_td_t* prev   = 0;
 
     while (remain > 0) {
         uint16_t chunk = (remain > 512) ? 512 : remain;
         uhci_td_t* td  = usb_build_td(UHCI_PID_IN, dev_addr, ep,
-                                       toggle, chunk,
+                                       bulk_in_toggle[dev_addr][ep], chunk,
                                        (uint32_t)dst, 0 /* full-speed */);
         if (!td) {
             /* Free already-built chain */
@@ -384,7 +386,7 @@ int usb_bulk_in(uint8_t dev_addr, uint8_t ep, void* buf, uint16_t len) {
         prev    = td;
         dst    += chunk;
         remain -= chunk;
-        toggle ^= 1;
+        bulk_in_toggle[dev_addr][ep] ^= 1;
     }
 
     if (!first) return -1;
@@ -401,7 +403,7 @@ int usb_bulk_in(uint8_t dev_addr, uint8_t ep, void* buf, uint16_t len) {
         return -1;
     }
 
-    int r = usb_exec_qh(qh, first, 500);
+    int r = usb_exec_qh(qh, first, timeout_ms);
 
     uhci_free_qh(qh);
     uhci_td_t* t = first;
@@ -421,14 +423,13 @@ int usb_bulk_out(uint8_t dev_addr, uint8_t ep, const void* buf, uint16_t len) {
 
     const uint8_t* src    = (const uint8_t*)buf;
     uint16_t       remain = len;
-    uint8_t        toggle = 1;
     uhci_td_t*     first  = 0;
     uhci_td_t*     prev   = 0;
 
     while (remain > 0) {
         uint16_t chunk = (remain > 512) ? 512 : remain;
         uhci_td_t* td  = usb_build_td(UHCI_PID_OUT, dev_addr, ep,
-                                       toggle, chunk,
+                                       bulk_out_toggle[dev_addr][ep], chunk,
                                        (uint32_t)src, 0);
         if (!td) {
             uhci_td_t* t = first;
@@ -448,7 +449,7 @@ int usb_bulk_out(uint8_t dev_addr, uint8_t ep, const void* buf, uint16_t len) {
         prev    = td;
         src    += chunk;
         remain -= chunk;
-        toggle ^= 1;
+        bulk_out_toggle[dev_addr][ep] ^= 1;
     }
 
     if (!first) return -1;

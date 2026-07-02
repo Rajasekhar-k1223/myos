@@ -154,3 +154,88 @@ int sprintf(char* buf, const char* fmt, ...) {
     va_end(ap);
     return r;
 }
+
+/*
+ * Minimal sscanf: supports literal character matching (a space in the
+ * format means "skip zero or more whitespace chars", matching scanf
+ * semantics), %[width]x (hex into unsigned int*) and %u (decimal into
+ * unsigned int*). That is the complete subset nanosvg.h's color parser
+ * (src/nanosvg.h) needs ("#%2x%2x%2x", "#%1x%1x%1x", "rgb(%u, %u, %u)") —
+ * this is NOT a general-purpose sscanf and will not handle other
+ * conversions (%d/%f/%s/...).
+ */
+static int vsscanf_impl(const char* str, const char* fmt, va_list ap) {
+    int matched = 0;
+
+    while (*fmt) {
+        if (*fmt == ' ') {
+            while (*str == ' ' || *str == '\t') str++;
+            fmt++;
+        } else if (*fmt == '%') {
+            fmt++;
+            int width = 0;
+            while (*fmt >= '0' && *fmt <= '9') { width = width * 10 + (*fmt - '0'); fmt++; }
+            if (*fmt == 'x') {
+                unsigned int v = 0;
+                int digits = 0;
+                int limit = width > 0 ? width : 8;
+                while (digits < limit) {
+                    char c = *str;
+                    int d;
+                    if (c >= '0' && c <= '9') d = c - '0';
+                    else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+                    else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+                    else break;
+                    v = v * 16 + (unsigned int)d;
+                    str++; digits++;
+                }
+                if (digits == 0) goto done;
+                /* "#%1x..." (one hex digit) means e.g. 'c' -> 0xcc, per the
+                 * #rgb shorthand nanosvg.h expects from this conversion. */
+                if (width == 1) v = v * 16 + v;
+                *va_arg(ap, unsigned int*) = v;
+                matched++;
+                fmt++;
+            } else if (*fmt == 'u') {
+                while (*str == ' ' || *str == '\t') str++;
+                unsigned int v = 0;
+                int digits = 0;
+                while (*str >= '0' && *str <= '9') { v = v * 10 + (unsigned int)(*str - '0'); str++; digits++; }
+                if (digits == 0) goto done;
+                *va_arg(ap, unsigned int*) = v;
+                matched++;
+                fmt++;
+            } else {
+                break; /* unsupported conversion */
+            }
+        } else {
+            if (*str != *fmt) goto done;
+            str++; fmt++;
+        }
+    }
+
+done:
+    return matched;
+}
+
+int sscanf(const char* str, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsscanf_impl(str, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+/* glibc's <stdio.h> redirects bare sscanf(...) calls to this versioned
+ * symbol (its C99 scanf-family ABI), so nanosvg.h's plain `sscanf(...)`
+ * calls resolve to __isoc99_sscanf at link time, not sscanf -- this is a
+ * quirk of using the host's glibc headers in a -ffreestanding/-nostdlib
+ * build rather than a real bare-metal sysroot. Same parser, different name
+ * to satisfy the linker. */
+int __isoc99_sscanf(const char* str, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsscanf_impl(str, fmt, ap);
+    va_end(ap);
+    return r;
+}

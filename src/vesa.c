@@ -2,7 +2,7 @@
 #include "kheap.h"
 #include "string.h"
 
-static uint32_t* fb = 0;
+uint32_t* fb = 0;
 uint32_t vesa_width  = 0;
 uint32_t vesa_height = 0;
 static uint32_t fb_pitch = 0;
@@ -41,7 +41,12 @@ void vesa_set_double_buffer(int enable) {
 }
 
 void vesa_swap_buffers(void) {
-    if (!double_buffer_enabled || !backbuffer || !fb) return;
+    extern void com1_print(const char*);
+    if (!double_buffer_enabled || !backbuffer || !fb) {
+        // com1_print("[vesa_swap] skipped (not ready)\n");
+        return;
+    }
+    // com1_print("[vesa_swap] copying...\n");
     if (fb_pitch == vesa_width * 4) {
         /* Tight pitch — single memcpy is safe and fast */
         memcpy(fb, backbuffer, vesa_width * vesa_height * 4);
@@ -171,3 +176,4 @@ void vesa_blit_region(uint32_t* src, int x, int y, int w, int h) {
         }
     }
 }
+uint32_t* vesa_get_backbuffer(void) { return backbuffer; }
