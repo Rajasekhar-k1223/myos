@@ -64,8 +64,13 @@ void paging_init(void) {
     kernel_page_directory = (uint32_t*)pmm_alloc_frame();
     memset(kernel_page_directory, 0, 4096);
 
-    /* Identity map the first 256 MB of memory (kernel + DMA buffers) */
-    for (uint32_t i = 0; i < 0x10000000; i += 4096) {
+    /* Identity-map all physical RAM so the kernel and initrd are always
+     * reachable regardless of how much RAM the system has.
+     * Cap at 0xC0000000 (3 GB) to leave the top GB for MMIO/APIC regions. */
+    extern uint32_t pmm_get_max_frames(void);
+    uint32_t top = pmm_get_max_frames() * 4096;
+    if (top == 0 || top > 0xC0000000) top = 0xC0000000;
+    for (uint32_t i = 0; i < top; i += 4096) {
         paging_map_page(i, i, 3); /* Present + Read/Write + Supervisor */
     }
 

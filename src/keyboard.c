@@ -31,6 +31,8 @@ static const char sc_ascii_shift[] = {
 static int shift_held = 0;
 static int ctrl_held = 0;
 
+volatile uint32_t current_lvgl_key = 0;
+
 /* Polled key ring buffer — used by installer and other non-IRQ consumers */
 #define KEY_RING_SIZE 64
 static volatile char  key_ring[KEY_RING_SIZE];
@@ -50,6 +52,14 @@ char keyboard_poll_char(void) {
     char c = key_ring[key_ring_tail];
     key_ring_tail = (key_ring_tail + 1) % KEY_RING_SIZE;
     return c;
+}
+
+int keyboard_has_key(void) {
+    return key_ring_head != key_ring_tail;
+}
+
+void keyboard_flush(void) {
+    key_ring_tail = key_ring_head;
 }
 
 void keyboard_handler_inject(char c) {
@@ -112,33 +122,66 @@ static void keyboard_callback(struct registers* regs) {
         return;
     }
 
-    if (sc & 0x80) return; /* ignore all other key-release events */
+    if (sc & 0x80) {
+        current_lvgl_key = 0; // Release key
+        return;
+    }
 
     if (sc == 0x49) { // Page Up
+        current_lvgl_key = 17;
         extern int wm_handle_shortcut(char c);
         wm_handle_shortcut(17);
         return;
     }
     if (sc == 0x51) { // Page Down
+        current_lvgl_key = 18;
         extern int wm_handle_shortcut(char c);
         wm_handle_shortcut(18);
         return;
     }
-    if (sc == 0x48) { // Up arrow — history prev (\x10)
+    if (sc == 0x48) { // Up arrow (\x10)
+        keyboard_push_char('\x10');
+        current_lvgl_key = 17; // LV_KEY_UP
         extern int wm_handle_keypress(char c);
         extern void shell_handle_keypress(char c);
         if (!wm_handle_keypress('\x10')) shell_handle_keypress('\x10');
         return;
     }
-    if (sc == 0x50) { // Down arrow — history next (\x11)
+    if (sc == 0x50) { // Down arrow (\x11)
+        keyboard_push_char('\x11');
+        current_lvgl_key = 20; // LV_KEY_DOWN
         extern int wm_handle_keypress(char c);
         extern void shell_handle_keypress(char c);
         if (!wm_handle_keypress('\x11')) shell_handle_keypress('\x11');
         return;
     }
+    if (sc == 0x4B) { // Left arrow (\x12)
+        keyboard_push_char('\x12');
+        current_lvgl_key = 18; // LV_KEY_LEFT
+        extern int wm_handle_keypress(char c);
+        extern void shell_handle_keypress(char c);
+        if (!wm_handle_keypress('\x12')) shell_handle_keypress('\x12');
+        return;
+    }
+    if (sc == 0x4D) { // Right arrow (\x13)
+        keyboard_push_char('\x13');
+        current_lvgl_key = 19; // LV_KEY_RIGHT
+        extern int wm_handle_keypress(char c);
+        extern void shell_handle_keypress(char c);
+        if (!wm_handle_keypress('\x13')) shell_handle_keypress('\x13');
+        return;
+    }
 
     if (sc < sizeof(sc_ascii)) {
         char c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];
+        
+        uint32_t lk = c;
+        if (c == '\n' || c == '\r') lk = 10; // LV_KEY_ENTER
+        else if (c == '\b') lk = 8; // LV_KEY_BACKSPACE
+        else if (c == '\t') lk = 9; // LV_KEY_NEXT
+        else if (c == 27) lk = 27; // LV_KEY_ESC
+        current_lvgl_key = lk;
+        
         keyboard_handler_inject(c);
     }
 }

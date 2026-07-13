@@ -586,13 +586,45 @@ void wm_set_wallpaper(const char* filename) {
     for (uint32_t i = 0; i < vesa_width * vesa_height; i++) {
         desktop_bg_buffer[i] = 0x008080;
     }
-    extern void bmp_load_to_buffer(const char*, uint32_t*, int, int, int, int);
-    for (int y = 0; y < (int)vesa_height; y += 150) {
-        for (int x = 0; x < (int)vesa_width; x += 250) {
-            bmp_load_to_buffer(filename, desktop_bg_buffer, vesa_width, vesa_height, x, y);
+    extern void bmp_load_to_buffer_scaled(const char*, uint32_t*, int, int, int, int, int, int);
+    bmp_load_to_buffer_scaled(filename, desktop_bg_buffer, vesa_width, vesa_height, 0, 0, vesa_width, vesa_height);
+    wm_request_redraw();
+}
+
+void wm_blur_desktop_bg(int radius) {
+    extern uint32_t vesa_width, vesa_height;
+    if (!desktop_bg_buffer || radius < 1) return;
+    int w = (int)vesa_width, h = (int)vesa_height;
+    extern void* kmalloc(size_t);
+    extern void kfree(void*);
+    uint32_t* tmp = (uint32_t*)kmalloc(w * h * 4);
+    if (!tmp) return;
+    
+    for (int r = 0; r < h; r++) {
+        for (int c = 0; c < w; c++) {
+            int rr=0, gg=0, bb=0, cnt=0;
+            for (int k=-radius; k<=radius; k++) {
+                int sc = c + k;
+                if (sc < 0) sc = 0; if (sc >= w) sc = w-1;
+                uint32_t p = desktop_bg_buffer[r * w + sc];
+                rr += (p >> 16) & 0xFF; gg += (p >> 8) & 0xFF; bb += p & 0xFF; cnt++;
+            }
+            tmp[r * w + c] = ((rr/cnt)<<16) | ((gg/cnt)<<8) | (bb/cnt);
         }
     }
-    wm_request_redraw();
+    for (int r = 0; r < h; r++) {
+        for (int c = 0; c < w; c++) {
+            int rr=0, gg=0, bb=0, cnt=0;
+            for (int k=-radius; k<=radius; k++) {
+                int sr = r + k;
+                if (sr < 0) sr = 0; if (sr >= h) sr = h-1;
+                uint32_t p = tmp[sr * w + c];
+                rr += (p >> 16) & 0xFF; gg += (p >> 8) & 0xFF; bb += p & 0xFF; cnt++;
+            }
+            desktop_bg_buffer[r * w + c] = ((rr/cnt)<<16) | ((gg/cnt)<<8) | (bb/cnt);
+        }
+    }
+    kfree(tmp);
 }
 
 static window_t* wm_notepad_open(const char* title, uint32_t x, uint32_t y) {
@@ -2501,7 +2533,21 @@ static void wm_render_activities_overview(void) {
 
 /* ═══════════════════════════════════════════════════════════════════ */
 
-static void wm_render(void) {
+static void wm_draw_sprite(uint32_t* sprite, int w, int h, int x, int y, uint32_t colorkey) {
+    if (!sprite) return;
+    extern void vesa_putpixel_alpha(uint32_t x, uint32_t y, uint32_t color, uint8_t alpha);
+    for (int j = 0; j < h; j++) {
+        for (int i = 0; i < w; i++) {
+            uint32_t px = sprite[j * w + i];
+            uint8_t a = (px >> 24) & 0xFF;
+            if (a > 0 && px != colorkey) {
+                vesa_putpixel_alpha((uint32_t)(x + i), (uint32_t)(y + j), px, a);
+            }
+        }
+    }
+}
+
+void wm_render(void) {
     extern int sdl_app_active;
     if (sdl_app_active) return;
 
@@ -2751,6 +2797,9 @@ static void wm_render(void) {
     /* Flush any NanoVG draws from window layer */
     wm_nvg_flush();
 
+    extern int in_installer_mode;
+    if (in_installer_mode) return;
+
     // ── Shell chrome: dock/panel/topbar — branch per DE layout ──────────────
     if (desktop_layout == 1) {
         /* KDE Plasma: full-width bottom panel, no side dock */
@@ -2937,10 +2986,8 @@ static void wm_render(void) {
             for (int sc = ix + 6; sc < ix + dsize - 6; sc++)
                 vesa_putpixel_alpha((uint32_t)sc, (uint32_t)(iy + 3 - rise), 0xFFFFFF, 28);
 
-            if (wm_nvg) {
-        wm_nvg_ensure_frame();
-                wm_nvg_draw_icon(ix + dsize / 2.0f, iy - rise + dsize / 2.0f, dapps[i].label);
-
+            if (dbufs[dapps[i].buf_id]) {
+                wm_draw_sprite(dbufs[dapps[i].buf_id], 32, 32, ix + (dsize - 32)/2, iy - rise + (dsize - 32)/2, 0);
             }
 
             /* Active-window indicator dot (always visible if app is running) */
@@ -4191,3 +4238,20 @@ void wm_process_scroll(int delta) {
         browser_handle_scroll(delta);
     }
 }
+
+void wm_draw_installer_window_bg(int x, int y, int w, int h) {
+    extern void vesa_draw_rect_alpha(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint8_t);
+    // Draw simple glassmorphism rectangle
+    vesa_draw_rect_alpha(x, y, w, h, 0x0F121C, 240);
+    
+    // Draw a subtle border
+    for (int bx = x; bx < x + w; bx++) {
+        vesa_putpixel_alpha(bx, y, 0xFFFFFF, 30);
+        vesa_putpixel_alpha(bx, y + h - 1, 0xFFFFFF, 30);
+    }
+    for (int by = y; by < y + h; by++) {
+        vesa_putpixel_alpha(x, by, 0xFFFFFF, 30);
+        vesa_putpixel_alpha(x + w - 1, by, 0xFFFFFF, 30);
+    }
+}
+

@@ -19,3 +19,6 @@ int fclose(FILE* f) { (void)f; return 0; }
 int fseek(FILE* f, long off, int whence) { (void)f; (void)off; (void)whence; return -1; }
 long ftell(FILE* f) { (void)f; return 0; }
 size_t fread(void* buf, size_t sz, size_t n, FILE* f) { (void)buf; (void)sz; (void)n; (void)f; return 0; }
+
+int abs(int x) { return x < 0 ? -x : x; }
+long int labs(long int x) { return x < 0 ? -x : x; }

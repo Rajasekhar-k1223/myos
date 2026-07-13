@@ -234,12 +234,43 @@ void nk_elseaos_render(void) {
             } break;
             case NK_COMMAND_IMAGE: {
                 const struct nk_command_image *i = (const struct nk_command_image *)cmd;
-                const char* filename = (const char*)i->img.handle.ptr;
-                if (filename) {
-                    extern void bmp_load_to_buffer_scaled(const char* filename, uint32_t* buffer, int buf_w, int buf_h, int offset_x, int offset_y, int scale_w, int scale_h);
-                    extern uint32_t* vesa_get_backbuffer(void);
-                    extern uint32_t vesa_width, vesa_height;
-                    bmp_load_to_buffer_scaled(filename, vesa_get_backbuffer(), vesa_width, vesa_height, i->x, i->y, i->w, i->h);
+                /* Animated logo frames use nk_image_id(10000+frame), frame 0-99.
+                 * Static BMP filenames use nk_image_ptr(str) where str is a kernel
+                 * text address >> 10099.  Use bounded check to distinguish them. */
+                if (i->img.handle.id >= 10000 && i->img.handle.id <= 10099) {
+                    int frame = i->img.handle.id - 10000;
+                    if (frame >= 0 && frame < 100) {
+                        static const uint32_t* raw_video = (void*)0;
+                        if (!raw_video) {
+                            extern void* tar_get_file(const char*, size_t*);
+                            size_t sz = 0;
+                            raw_video = (const uint32_t*)tar_get_file("logo.raw", &sz);
+                        }
+                        if (raw_video) {
+                            extern uint32_t* vesa_get_backbuffer(void);
+                            extern uint32_t vesa_width, vesa_height;
+                            uint32_t* bb = vesa_get_backbuffer();
+                            const uint32_t* src = raw_video + (frame * 160 * 160);
+                            for (int y = 0; y < 160 && (i->y + y) < (int)vesa_height; y++) {
+                                for (int x = 0; x < 160 && (i->x + x) < (int)vesa_width; x++) {
+                                    if (i->y + y < 0 || i->x + x < 0) continue;
+                                    uint32_t color = src[y * 160 + x];
+                                    if (color != 0) {
+                                        bb[(i->y + y) * vesa_width + (i->x + x)] = color;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    /* Static BMP: handle.ptr is a const char* filename */
+                    const char* filename = (const char*)i->img.handle.ptr;
+                    if (filename) {
+                        extern void bmp_load_to_buffer_scaled(const char* filename, uint32_t* buffer, int buf_w, int buf_h, int offset_x, int offset_y, int scale_w, int scale_h);
+                        extern uint32_t* vesa_get_backbuffer(void);
+                        extern uint32_t vesa_width, vesa_height;
+                        bmp_load_to_buffer_scaled(filename, vesa_get_backbuffer(), vesa_width, vesa_height, i->x, i->y, i->w, i->h);
+                    }
                 }
             } break;
             default: break;

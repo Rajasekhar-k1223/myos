@@ -32,6 +32,19 @@ void vesa_init_backbuffer(void) {
             extern void terminal_printf(const char*, ...);
             terminal_printf("[VESA] FATAL: back-buffer alloc failed (%ux%u)\n",
                             vesa_width, vesa_height);
+            return;
+        }
+        /* Sync backbuffer with what's currently on screen so the first
+         * vesa_swap_buffers() call produces no visual flash or jump. */
+        if (fb) {
+            if (fb_pitch == vesa_width * 4) {
+                memcpy(backbuffer, fb, vesa_width * vesa_height * 4);
+            } else {
+                for (uint32_t y = 0; y < vesa_height; y++)
+                    memcpy(backbuffer + y * vesa_width,
+                           (uint8_t*)fb + y * fb_pitch,
+                           vesa_width * 4);
+            }
         }
     }
 }
@@ -116,10 +129,20 @@ uint32_t vesa_getpixel(uint32_t x, uint32_t y) {
 }
 
 void vesa_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
-    for (uint32_t i = 0; i < h; i++) {
-        for (uint32_t j = 0; j < w; j++) {
-            vesa_putpixel(x + j, y + i, color);
-        }
+    if (!w || !h) return;
+    if (x >= vesa_width || y >= vesa_height) return;
+    if (x + w > vesa_width)  w = vesa_width  - x;
+    if (y + h > vesa_height) h = vesa_height - y;
+
+    for (uint32_t row = 0; row < h; row++) {
+        uint32_t* dst;
+        if (double_buffer_enabled && backbuffer)
+            dst = backbuffer + (y + row) * vesa_width + x;
+        else if (fb)
+            dst = (uint32_t*)((uint8_t*)fb + (y + row) * fb_pitch) + x;
+        else return;
+        for (uint32_t col = 0; col < w; col++)
+            dst[col] = color;
     }
 }
 
@@ -136,11 +159,7 @@ void vesa_draw_rect_alpha(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32
 }
 
 void vesa_clear(uint32_t color) {
-    for (uint32_t y = 0; y < vesa_height; y++) {
-        for (uint32_t x = 0; x < vesa_width; x++) {
-            vesa_putpixel(x, y, color);
-        }
-    }
+    vesa_draw_rect(0, 0, vesa_width, vesa_height, color);
 }
 
 void vesa_scroll_by(uint32_t pixels) {

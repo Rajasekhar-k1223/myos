@@ -3,6 +3,8 @@
 #include "wm.h"
 #include "nk_backend.h"
 #include "io.h"
+#include "rtc.h"   /* for rtc_read() — live clock in header */
+#include <stdbool.h>
 #define NK_INCLUDE_FIXED_TYPES
 #include "nuklear.h"
 #include <stdio.h>
@@ -18,6 +20,34 @@ static const char* SNAME[NUM_STEPS] = {
     "Partitions","Install Type","Apps","User Account",
     "Security","Theme","Accessibility","AI Setup",
     "Privacy","Summary","Installing","First Boot"
+};
+/* Per-step icon character (ASCII, single char shown in colored badge) */
+static const char* SICON[NUM_STEPS] = {
+    "*","L","K","T","=","#","W","D","P","I",
+    "+","@","!","^","A","i","~","v",">",">>"
+};
+/* Per-step accent color: r,g,b packed as 0xRRGGBB */
+static const uint32_t SCLR[NUM_STEPS] = {
+    0x1C7EFF, /* Welcome    blue    */
+    0xFF7722, /* Language   orange  */
+    0xFF7722, /* Keyboard   orange  */
+    0xFF8833, /* Time Zone  orange  */
+    0xFFAA44, /* License    amber   */
+    0x11CCAA, /* Hw. Check  teal    */
+    0x11CCAA, /* Network    teal    */
+    0xFFCC22, /* Disk       yellow  */
+    0xFFCC22, /* Partitions yellow  */
+    0xFFAA33, /* Inst Type  amber   */
+    0x9955FF, /* Apps       purple  */
+    0x9955FF, /* User Acct  purple  */
+    0xFF4455, /* Security   red     */
+    0xCC55FF, /* Theme      violet  */
+    0x9966FF, /* Access.    indigo  */
+    0x22DDFF, /* AI Setup   cyan    */
+    0x22CCEE, /* Privacy    cyan    */
+    0x22CC66, /* Summary    green   */
+    0x33DD77, /* Installing green   */
+    0x44EE88, /* First Boot lt-green*/
 };
 
 int   current_step       = 0;
@@ -105,9 +135,422 @@ static int   priv_location    = 0;
 static int   priv_personalized= 0;
 static int   priv_diagnostics = 1;
 
+/* live UI label handles (updated every frame) */
+static void* g_status_lbl = (void*)0;  /* header clock/wifi label */
+static void* g_installer_win = (void*)0;
+static void* g_lang_dd = (void*)0;
+static void* g_kbd_dd = (void*)0;
+
+static void next_btn_event_cb(void* e) {
+    extern int lv_event_get_code(void*);
+    int code = lv_event_get_code(e);
+    if(code == 2 /* LV_EVENT_CLICKED */) {
+        extern int lv_dropdown_get_selected(const void*);
+        selected_lang = lv_dropdown_get_selected(g_lang_dd);
+        selected_kbd = lv_dropdown_get_selected(g_kbd_dd);
+        
+        // Hide window instead of deleting to avoid crash
+        extern void lv_obj_add_flag(void*, int);
+        lv_obj_add_flag(g_installer_win, 1 /* LV_OBJ_FLAG_HIDDEN */);
+        
+        current_step = 1;
+    }
+}
+
+    extern void* lv_btn_create(void*);
+    extern void* lv_disp_get_scr_act(void*);
+    extern void* lv_disp_get_default(void);
+    extern void lv_obj_set_size(void*, int, int);
+    extern void lv_obj_align(void*, int, int, int);
+    extern void* lv_label_create(void*);
+    extern void lv_label_set_text(void*, const char*);
+    extern void lv_obj_set_style_bg_color(void*, uint32_t, int);
+    extern void lv_obj_set_style_bg_opa(void*, uint8_t, int);
+    extern void lv_obj_set_style_text_color(void*, uint32_t, int);
+    extern void lv_obj_set_style_radius(void*, int, int);
+    extern void lv_obj_set_style_border_width(void*, int, int);
+    extern void lv_obj_set_style_border_color(void*, uint32_t, int);
+    extern void* lv_obj_create(void*);
+    extern void* lv_dropdown_create(void*);
+    extern void lv_dropdown_set_options(void*, const char*);
+    extern void lv_obj_set_style_text_font(void*, const void*, int);
+    extern void lv_obj_set_style_shadow_width(void*, int, int);
+    extern void lv_obj_set_style_shadow_color(void*, uint32_t, int);
+    extern void lv_obj_set_style_shadow_spread(void*, int, int);
+    extern void lv_obj_set_style_shadow_ofs_x(void*, int, int);
+    extern void lv_obj_set_style_shadow_ofs_y(void*, int, int);
+    extern void* lv_canvas_create(void*);
+    extern void lv_canvas_set_buffer(void*, void*, int, int, int);
+    extern void bmp_load_to_buffer(const char*, uint32_t*, int, int, int, int);
+    
+    extern int lv_font_montserrat_12;
+    extern int lv_font_montserrat_16;
+    extern int lv_font_montserrat_24;
+    extern int lv_font_montserrat_48;
+
+    extern int lv_font_inter_700_48;
+    extern int lv_font_inter_400_16;
+    extern int lv_font_inter_500_16;
+    extern int lv_font_inter_600_16;
+
+static uint32_t phoenix_buf[180 * 180];
+
+void installer_lvgl_init(void) {
+    static int lvgl_inited = 0;
+    if (lvgl_inited) return;
+    lvgl_inited = 1;
+
+    extern void lv_init(void);
+    extern void lv_port_disp_init(void);
+    extern void lv_port_indev_init(void);
+    extern void lv_obj_set_style_border_opa(void*, int, int);
+    extern void lv_obj_set_style_bg_grad_color(void*, uint32_t, int);
+    extern void lv_obj_set_style_bg_grad_dir(void*, int, int);
+    extern void lv_group_add_obj(void*, void*);
+
+    lv_init();
+    lv_port_disp_init();
+    lv_port_indev_init();
+
+    // ── Keyboard Group Setup ────────────────────────────────────────────────
+    extern void* lv_group_create(void);
+    extern void lv_group_set_default(void*);
+    extern void lv_indev_set_group(void*, void*);
+    extern void* indev_keypad;
+    void* group = lv_group_create();
+    lv_group_set_default(group);
+    if (indev_keypad) {
+        lv_indev_set_group(indev_keypad, group);
+    }
+
+    void* disp = lv_disp_get_default();
+    void* scr = lv_disp_get_scr_act(disp);
+    lv_obj_set_style_bg_opa(scr, 0, 0);
+
+    void* win = lv_obj_create(scr);
+    g_installer_win = win;
+    lv_obj_set_size(win, 700, 500); 
+    lv_obj_align(win, 9 /* LV_ALIGN_CENTER */, 0, 0);
+    lv_obj_set_style_bg_color(win, 0xFF101520, 0);
+    lv_obj_set_style_bg_opa(win, 230, 0); 
+    lv_obj_set_style_radius(win, 16, 0);
+    extern void lv_obj_set_style_clip_corner(void*, int, int);
+    lv_obj_set_style_clip_corner(win, 1, 0);
+    extern void lv_obj_clear_flag(void*, uint32_t);
+    lv_obj_clear_flag(win, 16 /* LV_OBJ_FLAG_SCROLLABLE */);
+    // Fix window shadow glitch (caused by transparent screen)
+    lv_obj_set_style_border_width(win, 2, 0);
+    lv_obj_set_style_border_color(win, 0xFF00A8FF, 0);
+    lv_obj_set_style_shadow_width(win, 0, 0);
+    // Remove default LVGL padding so header sits flush at the top
+    extern void lv_obj_set_style_pad_top(void*, int, int);
+    extern void lv_obj_set_style_pad_bottom(void*, int, int);
+    extern void lv_obj_set_style_pad_left(void*, int, int);
+    extern void lv_obj_set_style_pad_right(void*, int, int);
+    lv_obj_set_style_pad_top(win,    0, 0);
+    lv_obj_set_style_pad_bottom(win, 0, 0);
+    lv_obj_set_style_pad_left(win,   0, 0);
+    lv_obj_set_style_pad_right(win,  0, 0);
+
+    extern void bmp_load_to_buffer_scaled(const char*, uint32_t*, int, int, int, int, int, int);
+    
+    // Window Background (Cosmic Image)
+    static uint32_t win_bg_buf[700 * 500];
+    bmp_load_to_buffer_scaled("welcome_body_bg.bmp", win_bg_buf, 700, 500, 0, 0, 700, 500);
+    for(int i = 0; i < 700 * 500; i++) {
+        win_bg_buf[i] |= 0xFF000000; // Force opaque
+    }
+    void* win_bg_canvas = lv_canvas_create(win);
+    lv_canvas_set_buffer(win_bg_canvas, win_bg_buf, 700, 500, 5 /* LV_IMG_CF_TRUE_COLOR_ALPHA */);
+    lv_obj_align(win_bg_canvas, 9 /* LV_ALIGN_CENTER */, 0, 0);
+
+    // Dark overlay for legibility (dimming the bright background)
+    void* overlay = lv_obj_create(win);
+    lv_obj_set_size(overlay, 700, 500);
+    lv_obj_align(overlay, 9 /* LV_ALIGN_CENTER */, 0, 0);
+    lv_obj_set_style_bg_color(overlay, 0x000000, 0);
+    lv_obj_set_style_bg_opa(overlay, 160, 0); // 60% opacity
+    lv_obj_set_style_border_width(overlay, 0, 0);
+    lv_obj_set_style_radius(overlay, 16, 0);
+    lv_obj_clear_flag(overlay, 16 /* LV_OBJ_FLAG_SCROLLABLE */);
+
+    static uint32_t small_logo_buf[24 * 24];
+    
+    // Top Left E Logo (Use clean text instead of glitchy scaled BMP)
+    void* top_logo = lv_label_create(win);
+    lv_label_set_text(top_logo, "[ E ]");
+    lv_obj_set_style_text_color(top_logo, 0xFF00A8FF, 0);
+    lv_obj_set_style_text_font(top_logo, &lv_font_inter_600_16, 0);
+    lv_obj_align(top_logo, 1 /* LV_ALIGN_TOP_LEFT */, 15, 15);
+
+    // Title
+    void* title = lv_label_create(win);
+    lv_label_set_text(title, "ElseaOS Installation");
+    lv_obj_set_style_text_color(title, 0xFFFFFFFF, 0);
+    lv_obj_set_style_text_font(title, &lv_font_inter_500_16, 0);
+    lv_obj_align(title, 1 /* LV_ALIGN_TOP_LEFT */, 55, 15);
+
+    // Close Button
+    void* close_btn = lv_label_create(win);
+    lv_label_set_text(close_btn, "\xef\x80\x8d"); // LV_SYMBOL_CLOSE
+    lv_obj_set_style_text_color(close_btn, 0xFFAAAAAA, 0);
+    lv_obj_set_style_text_font(close_btn, &lv_font_montserrat_16, 0);
+    lv_obj_align(close_btn, 3 /* LV_ALIGN_TOP_RIGHT */, -15, 15);
+
+    // Minimize Button
+    void* min_btn = lv_label_create(win);
+    lv_label_set_text(min_btn, "\xef\x81\xa8"); // LV_SYMBOL_MINUS
+    lv_obj_set_style_text_color(min_btn, 0xFFAAAAAA, 0);
+    lv_obj_set_style_text_font(min_btn, &lv_font_montserrat_16, 0);
+    lv_obj_align(min_btn, 3 /* LV_ALIGN_TOP_RIGHT */, -45, 15);
+
+    // Network & Time Header — stored globally so we can update it each frame
+    void* status = lv_label_create(win);
+    lv_label_set_text(status, "\xef\x87\xab  --:-- --"); // will be updated live
+    lv_obj_set_style_text_color(status, 0xFFFFFFFF, 0);
+    lv_obj_set_style_text_font(status, &lv_font_montserrat_12, 0);
+    lv_obj_align(status, 3 /* LV_ALIGN_TOP_RIGHT */, -80, 10);
+    g_status_lbl = status; // save for live updates
+
+    // Welcome text — large bold title matching target design
+    void* welcome = lv_label_create(win);
+    lv_label_set_text(welcome, "Welcome to ElseaOS");
+    lv_obj_set_style_text_color(welcome, 0xFF4EB8FF, 0); // cyan/blue glow tint
+    lv_obj_set_style_text_font(welcome, &lv_font_inter_700_48, 0); // BIG bold title
+    lv_obj_align(welcome, 2 /* LV_ALIGN_TOP_MID */, 0, 45);
+
+    // Subtitle
+    void* sub = lv_label_create(win);
+    lv_label_set_text(sub, "Your journey to a faster, smarter, and more secure computing experience begins now.");
+    lv_obj_set_style_text_color(sub, 0xFFBBCCDD, 0);
+    lv_obj_set_style_text_font(sub, &lv_font_inter_400_16, 0);
+    lv_obj_align(sub, 2 /* LV_ALIGN_TOP_MID */, 0, 105);
+
+    // Phoenix Logo
+    bmp_load_to_buffer("phoenix.bmp", phoenix_buf, 180, 180, 0, 0);
+    for(int i = 0; i < 180 * 180; i++) {
+        if((phoenix_buf[i] & 0xFFFFFF) != 0) {
+            phoenix_buf[i] |= 0xFF000000;
+        } else {
+            phoenix_buf[i] = 0x00000000;
+        }
+    }
+    void* logo_canvas = lv_canvas_create(win);
+    lv_canvas_set_buffer(logo_canvas, phoenix_buf, 180, 180, 5 /* LV_IMG_CF_TRUE_COLOR_ALPHA */);
+    lv_obj_align(logo_canvas, 9 /* LV_ALIGN_CENTER */, 0, -40);
+    
+    void* version = lv_label_create(win);
+    lv_label_set_text(version, "version 1.0.4 - 'Aurora'");
+    lv_obj_set_style_text_color(version, 0xFFAAAAAA, 0);
+    lv_obj_set_style_text_font(version, &lv_font_montserrat_12, 0);
+    lv_obj_align(version, 9 /* LV_ALIGN_CENTER */, 120, 30);
+
+    void* prompt = lv_label_create(win);
+    lv_label_set_text(prompt, "Please choose your language and keyboard layout to get started.");
+    lv_obj_set_style_text_color(prompt, 0xFFCCCCCC, 0);
+    lv_obj_set_style_text_font(prompt, &lv_font_montserrat_12, 0);
+    lv_obj_align(prompt, 2 /* LV_ALIGN_TOP_MID */, 0, 310);
+
+    // Labels for dropdowns
+    void* lang_lbl = lv_label_create(win);
+    lv_label_set_text(lang_lbl, "Language:");
+    lv_obj_set_style_text_color(lang_lbl, 0xFFBBCCDD, 0);
+    lv_obj_set_style_text_font(lang_lbl, &lv_font_inter_500_16, 0);
+    lv_obj_align(lang_lbl, 4 /* LV_ALIGN_BOTTOM_LEFT */, 85, -125);
+
+    void* kbd_lbl = lv_label_create(win);
+    lv_label_set_text(kbd_lbl, "Keyboard Layout:");
+    lv_obj_set_style_text_color(kbd_lbl, 0xFFBBCCDD, 0);
+    lv_obj_set_style_text_font(kbd_lbl, &lv_font_inter_500_16, 0);
+    lv_obj_align(kbd_lbl, 4 /* LV_ALIGN_BOTTOM_LEFT */, 355, -125);
+
+    // Language Dropdown
+    void* lang_dd = lv_dropdown_create(win);
+    g_lang_dd = lang_dd;
+    
+    // Make options dynamic based on user system storage (mocked for now)
+    extern void* kmalloc(size_t);
+    char* dyn_lang_options = (char*)kmalloc(256);
+    extern char* strcpy(char*, const char*);
+    extern char* strcat(char*, const char*);
+    strcpy(dyn_lang_options, "English (United States)\n");
+    strcat(dyn_lang_options, "English (United Kingdom)\n");
+    strcat(dyn_lang_options, "Spanish\n");
+    strcat(dyn_lang_options, "French\n");
+    strcat(dyn_lang_options, "German\n");
+    strcat(dyn_lang_options, "Japanese");
+
+    extern void lv_dropdown_set_options(void*, const char*);
+    lv_dropdown_set_options(lang_dd, dyn_lang_options);
+    
+    lv_obj_set_style_text_font(lang_dd, &lv_font_inter_500_16, 0);
+    lv_obj_set_size(lang_dd, 250, 45);
+    lv_obj_align(lang_dd, 4 /* LV_ALIGN_BOTTOM_LEFT */, 85, -70);
+    lv_obj_set_style_bg_color(lang_dd, 0x000000, 0); // Glass black
+    lv_obj_set_style_bg_opa(lang_dd, 100, 0); // High transparency
+    lv_obj_set_style_text_color(lang_dd, 0xFFFFFFFF, 0);
+    lv_obj_set_style_border_color(lang_dd, 0xFFFFFFFF, 0);
+    lv_obj_set_style_border_opa(lang_dd, 50, 0); // Subtle glass edge
+    lv_obj_set_style_radius(lang_dd, 8, 0);
+
+    // Style the dropdown list so selections highlight in blue
+    extern void* lv_dropdown_get_list(void*);
+    void* lang_list = lv_dropdown_get_list(lang_dd);
+    lv_obj_set_style_bg_color(lang_list, 0xFF111625, 0);
+    lv_obj_set_style_bg_opa(lang_list, 255, 0); // Fully opaque bg for readability
+    lv_obj_set_style_text_color(lang_list, 0xFFFFFFFF, 0);
+    lv_obj_set_style_text_font(lang_list, &lv_font_inter_500_16, 0); // Fix font visibility
+    lv_obj_set_style_border_color(lang_list, 0xFF00A8FF, 0);
+    
+    // Add hover and selected item highlights
+    lv_obj_set_style_bg_color(lang_list, 0xFF00A8FF, 0x040000 | 0x0001); // LV_PART_SELECTED | LV_STATE_CHECKED
+    lv_obj_set_style_bg_opa(lang_list, 200, 0x040000 | 0x0001);
+    lv_obj_set_style_bg_color(lang_list, 0xFF224488, 0x040000 | 0x0020); // LV_PART_SELECTED | LV_STATE_PRESSED
+    lv_obj_set_style_bg_opa(lang_list, 150, 0x040000 | 0x0020);
+
+    // Keyboard Dropdown
+    void* kbd_dd = lv_dropdown_create(win);
+    g_kbd_dd = kbd_dd;
+
+    char* dyn_kbd_options = (char*)kmalloc(256);
+    strcpy(dyn_kbd_options, "US English\n");
+    strcat(dyn_kbd_options, "UK English\n");
+    strcat(dyn_kbd_options, "Spanish (QWERTY)\n");
+    strcat(dyn_kbd_options, "French (AZERTY)\n");
+    strcat(dyn_kbd_options, "German (QWERTZ)");
+
+    lv_dropdown_set_options(kbd_dd, dyn_kbd_options);
+
+    lv_obj_set_style_text_font(kbd_dd, &lv_font_inter_500_16, 0);
+    lv_obj_set_size(kbd_dd, 250, 45);
+    lv_obj_align(kbd_dd, 4 /* LV_ALIGN_BOTTOM_LEFT */, 355, -70);
+    lv_obj_set_style_bg_color(kbd_dd, 0x000000, 0); // Glass black
+    lv_obj_set_style_bg_opa(kbd_dd, 100, 0); // High transparency
+    lv_obj_set_style_text_color(kbd_dd, 0xFFFFFFFF, 0);
+    lv_obj_set_style_border_color(kbd_dd, 0xFFFFFFFF, 0);
+    lv_obj_set_style_border_opa(kbd_dd, 50, 0); // Subtle glass edge
+    lv_obj_set_style_radius(kbd_dd, 8, 0);
+
+    void* kbd_list = lv_dropdown_get_list(kbd_dd);
+    lv_obj_set_style_bg_color(kbd_list, 0xFF111625, 0);
+    lv_obj_set_style_bg_opa(kbd_list, 255, 0);
+    lv_obj_set_style_text_color(kbd_list, 0xFFFFFFFF, 0);
+    lv_obj_set_style_text_font(kbd_list, &lv_font_inter_500_16, 0);
+    lv_obj_set_style_border_color(kbd_list, 0xFF00A8FF, 0);
+
+    lv_obj_set_style_bg_color(kbd_list, 0xFF00A8FF, 0x040000 | 0x0001);
+    lv_obj_set_style_bg_opa(kbd_list, 200, 0x040000 | 0x0001);
+    lv_obj_set_style_bg_color(kbd_list, 0xFF224488, 0x040000 | 0x0020);
+    lv_obj_set_style_bg_opa(kbd_list, 150, 0x040000 | 0x0020);
+
+
+    // ── 3D Shine Next Button ─────────────────────────────────────────────────
+    extern void lv_obj_align_to(void*, const void*, int, int, int);
+    extern void lv_obj_set_style_shadow_ofs_x(void*, int, int);
+    extern void lv_obj_set_style_shadow_ofs_y(void*, int, int);
+    extern void lv_obj_set_style_border_side(void*, int, int);
+    extern void lv_obj_set_style_translate_y(void*, int, int);
+    extern void lv_obj_set_style_outline_width(void*, int, int);
+    extern void lv_obj_set_style_outline_pad(void*, int, int);
+
+    void* next_btn = lv_btn_create(win);
+    lv_obj_set_size(next_btn, 10193 /* LV_SIZE_CONTENT */, 42);  // flexible width
+    extern void lv_obj_set_style_pad_left(void*, int, int);
+    extern void lv_obj_set_style_pad_right(void*, int, int);
+    lv_obj_set_style_pad_left(next_btn, 30, 0);
+    lv_obj_set_style_pad_right(next_btn, 30, 0);
+    
+    // Align bottom-right of window — LV_ALIGN_BOTTOM_RIGHT = 6 in LVGL 8.x
+    lv_obj_align(next_btn, 6 /* LV_ALIGN_BOTTOM_RIGHT */, -20, -20);
+
+    // ── Remove ALL LVGL theme outlines/rings for every state ─────────────────
+    lv_obj_set_style_outline_width(next_btn, 0, 0x0000); // default
+    lv_obj_set_style_outline_width(next_btn, 0, 0x0002); // focused
+    lv_obj_set_style_outline_width(next_btn, 0, 0x0020); // pressed
+    lv_obj_set_style_outline_width(next_btn, 0, 0x0022); // focused+pressed
+    lv_obj_set_style_outline_pad(next_btn, 0, 0x0000);
+
+    // ── DEFAULT STATE: 3D raised, glossy shine ───────────────────────────────
+    lv_obj_set_style_radius(next_btn, 0x7FFF, 0);  // perfect pill
+    // Deep sky blue → intense dark blue gradient (light source overhead)
+    // lv_obj_set_style_bg_color(next_btn,      0xFF55CCFF, 0); // bright cyan-blue top (shine)
+    lv_obj_set_style_bg_grad_color(next_btn, 0xFF003399, 0); // deep navy bottom
+    lv_obj_set_style_bg_grad_dir(next_btn,   1, 0);           // LV_GRAD_DIR_VER
+    lv_obj_set_style_bg_opa(next_btn, 255, 0);
+
+    // Top-left specular = the white gloss "shine" line along the top rim
+    lv_obj_set_style_border_width(next_btn, 2, 0);
+    lv_obj_set_style_border_color(next_btn, 0xFFFFFFFF, 0);
+    lv_obj_set_style_border_opa(next_btn,   200, 0);          // bright shine
+    lv_obj_set_style_border_side(next_btn,  6 /* TOP|LEFT */, 0);
+
+    // Depth shadow (bottom-right offset = button floating above surface)
+    lv_obj_set_style_shadow_width(next_btn,  16, 0);
+    lv_obj_set_style_shadow_color(next_btn,  0xFF001055, 0);
+    lv_obj_set_style_shadow_spread(next_btn, 1, 0);
+    lv_obj_set_style_shadow_ofs_x(next_btn,  3, 0);
+    lv_obj_set_style_shadow_ofs_y(next_btn,  5, 0);
+
+    // ── FOCUSED STATE (0x0002): keep same blue, just no white outline ────────
+    lv_obj_set_style_bg_color(next_btn,      0xFF55CCFF, 0x0002);
+    lv_obj_set_style_bg_grad_color(next_btn, 0xFF003399, 0x0002);
+    lv_obj_set_style_bg_grad_dir(next_btn,   1, 0x0002);
+    lv_obj_set_style_bg_opa(next_btn, 255, 0x0002);
+    lv_obj_set_style_border_color(next_btn, 0xFFFFFFFF, 0x0002);
+    lv_obj_set_style_border_opa(next_btn,   200, 0x0002);
+    lv_obj_set_style_border_side(next_btn,  6, 0x0002);
+    lv_obj_set_style_shadow_width(next_btn,  16, 0x0002);
+    lv_obj_set_style_shadow_color(next_btn,  0xFF001055, 0x0002);
+    lv_obj_set_style_shadow_ofs_x(next_btn,  3, 0x0002);
+    lv_obj_set_style_shadow_ofs_y(next_btn,  5, 0x0002);
+
+    // ── PRESSED STATE (0x0020): pushed-in 3D ─────────────────────────────────
+    // Reverse gradient: dark top → bright bottom (light now comes from below)
+    lv_obj_set_style_bg_color(next_btn,      0xFF003399, 0x0020); // dark navy top
+    lv_obj_set_style_bg_grad_color(next_btn, 0xFF2299EE, 0x0020); // bright mid-blue bottom
+    lv_obj_set_style_bg_grad_dir(next_btn,   1, 0x0020);
+    lv_obj_set_style_bg_opa(next_btn, 255, 0x0020);              // ALWAYS opaque
+    // Bottom-right shadow edge (inner side now lit)
+    lv_obj_set_style_border_color(next_btn, 0xFF002266, 0x0020);
+    lv_obj_set_style_border_opa(next_btn,   180, 0x0020);
+    lv_obj_set_style_border_side(next_btn,  9 /* BOTTOM|RIGHT */, 0x0020);
+    // Tiny inset shadow when pressed
+    lv_obj_set_style_shadow_width(next_btn,  6, 0x0020);
+    lv_obj_set_style_shadow_ofs_x(next_btn,  1, 0x0020);
+    lv_obj_set_style_shadow_ofs_y(next_btn,  2, 0x0020);
+    // Sink down slightly for tactile feel
+    lv_obj_set_style_translate_y(next_btn, 2, 0x0020);
+
+    // ── FOCUSED+PRESSED (0x0022): same as pressed, stays blue ────────────────
+    lv_obj_set_style_bg_color(next_btn,      0xFF003399, 0x0022);
+    lv_obj_set_style_bg_grad_color(next_btn, 0xFF2299EE, 0x0022);
+    lv_obj_set_style_bg_grad_dir(next_btn,   1, 0x0022);
+    lv_obj_set_style_bg_opa(next_btn, 255, 0x0022);
+    lv_obj_set_style_border_color(next_btn, 0xFF002266, 0x0022);
+    lv_obj_set_style_border_opa(next_btn,   180, 0x0022);
+    lv_obj_set_style_border_side(next_btn,  9, 0x0022);
+    lv_obj_set_style_shadow_width(next_btn,  6, 0x0022);
+    lv_obj_set_style_shadow_ofs_x(next_btn,  1, 0x0022);
+    lv_obj_set_style_shadow_ofs_y(next_btn,  2, 0x0022);
+    lv_obj_set_style_translate_y(next_btn, 2, 0x0022);
+
+    // ── Button label ─────────────────────────────────────────────────────────
+    void* btn_label = lv_label_create(next_btn);
+    lv_label_set_text(btn_label, "Next ->");
+    lv_obj_set_style_text_color(btn_label, 0xFFFFFFFF, 0);
+    lv_obj_set_style_text_font(btn_label, &lv_font_inter_600_16, 0); // compact label
+    lv_obj_align(btn_label, 9 /* LV_ALIGN_CENTER */, 0, 0);
+
+    // Attach click handler to move to the next screen!
+    extern void lv_obj_add_event_cb(void*, void*, int, void*);
+    lv_obj_add_event_cb(next_btn, next_btn_event_cb, 2 /* LV_EVENT_CLICKED */, (void*)0);
+    lv_group_add_obj(group, next_btn);
+}
+
 void installer_run(void) {
     nk_elseaos_init();
     in_installer_mode = 1;
+    installer_lvgl_init();
 }
 
 void installer_render_frame(void) {
@@ -119,14 +562,84 @@ void installer_render_frame(void) {
         last_step = current_step;
     }
 
+    // ── Live clock update — every frame, only redraw when second ticks ────
+    if (g_status_lbl) {
+        extern void rtc_read(struct rtc_time* t);
+        static struct rtc_time last_t = {0xFF,0xFF,0xFF,0,0,0};
+        struct rtc_time t;
+        rtc_read(&t);
+
+        // Only update label when seconds change (avoids jitter)
+        if (t.second != last_t.second || t.minute != last_t.minute || t.hour != last_t.hour) {
+            last_t = t;
+
+            static char time_buf[80];
+            static const char* months[12] = {
+                "Jan","Feb","Mar","Apr","May","Jun",
+                "Jul","Aug","Sep","Oct","Nov","Dec"
+            };
+            static const char* days[7] = {
+                "Sun","Mon","Tue","Wed","Thu","Fri","Sat"
+            };
+
+            // 24h → 12h
+            int hour12 = (int)(t.hour % 12);
+            if (hour12 == 0) hour12 = 12;
+            const char* ampm = (t.hour < 12) ? "AM" : "PM";
+
+            // Day-of-week via Zeller's congruence
+            int zd = t.day, zm = t.month, zy = t.year;
+            if (zm < 3) { zm += 12; zy--; }
+            int dow = (zd + (13*(zm+1)/5) + zy + zy/4 - zy/100 + zy/400) % 7;
+            if (dow < 0) dow += 7;
+            static const int zmap[7] = {6,0,1,2,3,4,5};
+            int wd = zmap[dow];
+            int mi = (t.month >= 1 && t.month <= 12) ? (int)(t.month - 1) : 0;
+
+            // Format: "wifi  HH:MM:SS AM | Day, DD Mon"
+            char* p = time_buf;
+            *p++ = '\xef'; *p++ = '\x87'; *p++ = '\xab'; // wifi symbol
+            *p++ = ' '; *p++ = ' ';
+            *p++ = '0' + hour12 / 10; *p++ = '0' + hour12 % 10;
+            *p++ = ':';
+            *p++ = '0' + t.minute / 10; *p++ = '0' + t.minute % 10;
+            *p++ = ':';
+            *p++ = '0' + t.second / 10; *p++ = '0' + t.second % 10; // SECONDS
+            *p++ = ' ';
+            *p++ = ampm[0]; *p++ = ampm[1]; *p++ = 'M';
+            *p++ = ' '; *p++ = '|'; *p++ = ' ';
+            *p++ = days[wd][0]; *p++ = days[wd][1]; *p++ = days[wd][2];
+            *p++ = ','; *p++ = ' ';
+            *p++ = '0' + t.day / 10; *p++ = '0' + t.day % 10;
+            *p++ = ' ';
+            *p++ = months[mi][0]; *p++ = months[mi][1]; *p++ = months[mi][2];
+            *p = '\0';
+
+            extern void lv_label_set_text(void*, const char*);
+            lv_label_set_text(g_status_lbl, time_buf);
+        }
+    }
+
+    // Step 0 (Welcome) is rendered entirely by LVGL — skip Nuklear to avoid double window
+    if (current_step == 0) {
+        nk_elseaos_process_input(); // still consume input so events don't queue up
+        extern void lv_obj_invalidate(void*);
+        extern void lv_refr_now(void*);
+        if (g_installer_win) {
+            lv_obj_invalidate(g_installer_win);
+            lv_refr_now((void*)0);
+        }
+        return;
+    }
+
     struct nk_context* ctx = nk_elseaos_get_context();
     nk_elseaos_process_input();
 
-    ctx->style.window.background       = nk_rgba(13,16,24,255);
-    ctx->style.window.fixed_background = nk_style_item_color(nk_rgba(13,16,24,255));
-    ctx->style.window.border_color     = nk_rgba(46,52,85,200);
-    ctx->style.window.border           = 1.0f;
-    ctx->style.window.rounding         = 14.0f;
+    ctx->style.window.background       = nk_rgba(0,0,0,0);
+    ctx->style.window.fixed_background = nk_style_item_color(nk_rgba(0,0,0,0));
+    ctx->style.window.border_color     = nk_rgba(0,0,0,0);
+    ctx->style.window.border           = 0.0f;
+    ctx->style.window.rounding         = 16.0f;
     ctx->style.window.padding          = nk_vec2(10,10);
     ctx->style.button.normal      = nk_style_item_color(nk_rgba(22,26,38,255));
     ctx->style.button.hover       = nk_style_item_color(nk_rgba(36,42,60,255));
@@ -139,9 +652,8 @@ void installer_render_frame(void) {
     ctx->style.progress.border        = 0.0f;
     ctx->style.checkbox.text_normal   = nk_rgb(200,200,210);
 
-    int win_w = 920, win_h = 620;
-    if (win_w > (int)vesa_width-20)  win_w = (int)vesa_width-20;
-    if (win_h > (int)vesa_height-20) win_h = (int)vesa_height-20;
+    int win_w = (vesa_width * 75) / 100;
+    int win_h = (vesa_height * 75) / 100;
     int win_x = ((int)vesa_width  - win_w)/2;
     int win_y = ((int)vesa_height - win_h)/2;
 
@@ -149,22 +661,226 @@ void installer_render_frame(void) {
         extern uint32_t* vesa_get_backbuffer(void);
         uint32_t *buf = vesa_get_backbuffer();
         if (buf) {
-            uint32_t tot = vesa_width*vesa_height;
-            for (uint32_t i=0;i<tot;i++) buf[i]=0x040609;
-            int sx=win_x+6,sy=win_y+10;
-            for (int y=sy;y<sy+win_h&&y<(int)vesa_height;y++){
-                if(y<0) continue;
-                uint32_t *row=buf+(uint32_t)y*vesa_width;
-                for(int x=sx;x<sx+win_w&&x<(int)vesa_width;x++)
-                    if(x>=0) row[x]=0x020305;
-            }
+            extern void wm_glass_panel(int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha);
+            extern void vesa_draw_rect_alpha(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color, uint8_t alpha);
+
+            /* Draw rounded window background, shadow, glow and outlines */
+            wm_draw_installer_window_bg(win_x, win_y, win_w, win_h);
         }
     }
 
+    /* Nuklear window styling — transparent bg (we drew our own) */
+    ctx->style.window.fixed_background = nk_style_item_color(nk_rgba(0,0,0,0));
+    ctx->style.window.border_color = nk_rgba(0, 0, 0, 0);  /* Disabled, using NanoVG outline */
+    ctx->style.window.border = 0.0f;
+    ctx->style.window.rounding = 16.0f;
+
     if (!nk_begin(ctx,"ElseaOS Installer",
         nk_rect(win_x,win_y,win_w,win_h),
-        NK_WINDOW_NO_SCROLLBAR|NK_WINDOW_BACKGROUND))
+        NK_WINDOW_NO_SCROLLBAR))
     { nk_end(ctx); nk_elseaos_render(); return; }
+
+    if (current_step == 0) {
+        /* --- CUSTOM WELCOME SCREEN TO MATCH MOCKUP --- */
+        /* Title bar */
+        nk_layout_row_template_begin(ctx,20);
+        nk_layout_row_template_push_static(ctx,300);
+        nk_layout_row_template_push_dynamic(ctx);
+        nk_layout_row_template_push_static(ctx,250);
+        nk_layout_row_template_end(ctx);
+
+        if (nk_group_begin(ctx,"WLogo",NK_WINDOW_NO_SCROLLBAR)) {
+            nk_layout_row_template_begin(ctx,30);
+            nk_layout_row_template_push_static(ctx,26);
+            nk_layout_row_template_push_dynamic(ctx);
+            nk_layout_row_template_end(ctx);
+            struct nk_user_font fb=nk_elseaos_create_font_bold(20.0f);
+            nk_style_push_font(ctx,&fb);
+            nk_image(ctx, nk_image_ptr((void*)"logo.png"));
+            nk_label_colored(ctx,"ElseaOS | Installation",NK_TEXT_LEFT,nk_rgb(218,222,232));
+            nk_style_pop_font(ctx);
+            nk_group_end(ctx);
+        }
+        nk_label(ctx,"",NK_TEXT_LEFT); // dynamic spacer
+        
+        if (nk_group_begin(ctx,"WTopRight",NK_WINDOW_NO_SCROLLBAR)) {
+            nk_layout_row_template_begin(ctx,30);
+            nk_layout_row_template_push_dynamic(ctx);
+            nk_layout_row_template_push_static(ctx,24);
+            nk_layout_row_template_push_static(ctx,180);
+            nk_layout_row_template_push_static(ctx,24);
+            nk_layout_row_template_end(ctx);
+            
+            nk_label(ctx,"",NK_TEXT_LEFT);
+            // draw custom wifi icon using an image
+            nk_image(ctx, nk_image_ptr((void*)"network.bmp"));
+            // time and date
+            struct nk_user_font fs=nk_elseaos_create_font(14.0f);
+            nk_style_push_font(ctx,&fs);
+            struct rtc_time my_t;
+            rtc_read(&my_t);
+            int hr = my_t.hour;
+            const char* ampm = "AM";
+            if(hr >= 12) {
+                ampm = "PM";
+                if(hr > 12) hr -= 12;
+            }
+            if(hr == 0) hr = 12;
+            
+            char my_clock[32];
+            extern int snprintf(char *str, size_t size, const char *format, ...);
+            snprintf(my_clock, sizeof(my_clock), "%04d-%02d-%02d %02d:%02d:%02d %s",
+                     my_t.year, my_t.month, my_t.day, hr, my_t.minute, my_t.second, ampm);
+            
+            nk_label_colored(ctx, my_clock, NK_TEXT_RIGHT, nk_rgb(180,185,200));
+            nk_style_pop_font(ctx);
+            // close button
+            ctx->style.button.normal = nk_style_item_color(nk_rgba(12,14,22,0));
+            ctx->style.button.hover  = nk_style_item_color(nk_rgba(215,65,65,255));
+            ctx->style.button.text_normal = nk_rgb(120,122,140);
+            if (nk_button_label(ctx,"X")) { nk_installer_running=0; in_installer_mode=0; }
+            nk_group_end(ctx);
+        }
+
+        nk_layout_row_dynamic(ctx,2,1); nk_spacing(ctx,5);
+
+        /* Main Header */
+        { struct nk_user_font fh=nk_elseaos_create_font_bold(38.0f);
+          nk_style_push_font(ctx,&fh);
+          nk_layout_row_dynamic(ctx,40,1);
+          nk_label_colored(ctx,"Welcome to ElseaOS",NK_TEXT_CENTERED,nk_rgb(55,175,255));
+          nk_style_pop_font(ctx); }
+          
+        { struct nk_user_font fs=nk_elseaos_create_font(16.0f);
+          nk_style_push_font(ctx,&fs);
+          nk_layout_row_dynamic(ctx,32,1);
+          nk_label_colored(ctx,"Your journey to a faster, smarter, and more secure computing experience begins now.",NK_TEXT_CENTERED,nk_rgb(180,188,210));
+          nk_style_pop_font(ctx); }
+          
+        nk_layout_row_dynamic(ctx,2,1); nk_spacing(ctx,1);
+
+        /* Center Logo */
+        int logo_h = 100;
+        nk_layout_row_template_begin(ctx, logo_h);
+        nk_layout_row_template_push_dynamic(ctx);
+        nk_layout_row_template_push_static(ctx, 100);
+        nk_layout_row_template_push_dynamic(ctx);
+        nk_layout_row_template_end(ctx);
+        
+        nk_label(ctx,"",NK_TEXT_LEFT);
+        nk_image(ctx, nk_image_ptr((void*)"logo.png"));
+        nk_label(ctx,"",NK_TEXT_LEFT);
+        
+        /* Version Text */
+        nk_layout_row_dynamic(ctx, 18, 1);
+        nk_label_colored(ctx, "version 1.0.4 - 'Aurora'", NK_TEXT_CENTERED, nk_rgb(150,160,180));
+
+        nk_layout_row_dynamic(ctx,4,1); nk_spacing(ctx,1);
+
+        /* Prompt */
+        { struct nk_user_font fs=nk_elseaos_create_font(16.0f);
+          nk_style_push_font(ctx,&fs);
+          nk_layout_row_dynamic(ctx,26,1);
+          nk_label_colored(ctx,"Please choose your language and keyboard layout to get started.",NK_TEXT_CENTERED,nk_rgb(200,208,230));
+          nk_style_pop_font(ctx); }
+
+        /* Combos */
+        nk_layout_row_dynamic(ctx,2,1); nk_spacing(ctx,1);
+        nk_layout_row_template_begin(ctx,50);
+        nk_layout_row_template_push_dynamic(ctx);
+        nk_layout_row_template_push_static(ctx,300);
+        nk_layout_row_template_push_static(ctx,40);
+        nk_layout_row_template_push_static(ctx,300);
+        nk_layout_row_template_push_dynamic(ctx);
+        nk_layout_row_template_end(ctx);
+        
+        static const char* languages[]={"English (United States)","English (UK)","Español","Français","Deutsch"};
+        static const char* keyboards[]={"US English","UK English","Dvorak","French (AZERTY)","German (QWERTZ)"};
+        
+        nk_label(ctx,"",NK_TEXT_LEFT);
+        
+        // Push Combo Styles
+        nk_style_push_color(ctx, &ctx->style.combo.border_color, nk_rgb(50, 150, 255));
+        nk_style_push_style_item(ctx, &ctx->style.combo.normal, nk_style_item_color(nk_rgba(10, 15, 25, 200)));
+        nk_style_push_style_item(ctx, &ctx->style.combo.hover, nk_style_item_color(nk_rgba(20, 30, 50, 200)));
+        nk_style_push_style_item(ctx, &ctx->style.combo.button.normal, nk_style_item_color(nk_rgba(0,0,0,0)));
+        nk_style_push_style_item(ctx, &ctx->style.combo.button.hover, nk_style_item_color(nk_rgba(0,0,0,0)));
+        nk_style_push_style_item(ctx, &ctx->style.combo.button.active, nk_style_item_color(nk_rgba(0,0,0,0)));
+        float old_combo_rounding = ctx->style.combo.rounding;
+        ctx->style.combo.rounding = 8.0f;
+        nk_style_push_color(ctx, &ctx->style.combo.symbol_normal, nk_rgb(50, 150, 255));
+        nk_style_push_color(ctx, &ctx->style.combo.symbol_hover, nk_rgb(100, 200, 255));
+        nk_style_push_color(ctx, &ctx->style.combo.symbol_active, nk_rgb(50, 150, 255));
+        
+        if (nk_group_begin(ctx,"LangGrp",NK_WINDOW_NO_SCROLLBAR)) {
+            nk_layout_row_dynamic(ctx,18,1);
+            nk_label_colored(ctx,"Language:",NK_TEXT_LEFT,nk_rgb(180,185,200));
+            nk_layout_row_dynamic(ctx,30,1);
+            selected_lang = nk_combo(ctx,languages,5,selected_lang,24,nk_vec2(300,150));
+            nk_group_end(ctx);
+        }
+        nk_label(ctx,"",NK_TEXT_LEFT);
+        if (nk_group_begin(ctx,"KbdGrp",NK_WINDOW_NO_SCROLLBAR)) {
+            nk_layout_row_dynamic(ctx,18,1);
+            nk_label_colored(ctx,"Keyboard Layout:",NK_TEXT_LEFT,nk_rgb(180,185,200));
+            nk_layout_row_dynamic(ctx,30,1);
+            selected_kbd = nk_combo(ctx,keyboards,5,selected_kbd,24,nk_vec2(300,150));
+            nk_group_end(ctx);
+        }
+        
+        // Pop Combo Styles
+        nk_style_pop_color(ctx);
+        nk_style_pop_style_item(ctx);
+        nk_style_pop_style_item(ctx);
+        nk_style_pop_style_item(ctx);
+        nk_style_pop_style_item(ctx);
+        nk_style_pop_color(ctx);
+        nk_style_pop_color(ctx);
+        nk_style_pop_color(ctx);
+        ctx->style.combo.rounding = old_combo_rounding;
+        nk_label(ctx,"",NK_TEXT_LEFT);
+
+        /* Next Button */
+        nk_layout_row_dynamic(ctx, 2, 1);
+        nk_spacing(ctx,1);
+        
+        nk_layout_row_template_begin(ctx,42);
+        nk_layout_row_template_push_dynamic(ctx);
+        nk_layout_row_template_push_static(ctx,130);
+        nk_layout_row_template_push_static(ctx,16); // right padding
+        nk_layout_row_template_end(ctx);
+        
+        nk_label(ctx,"",NK_TEXT_LEFT);
+        
+        nk_style_push_style_item(ctx,&ctx->style.button.normal,nk_style_item_color(nk_rgba(0,180,255,255)));
+        nk_style_push_style_item(ctx,&ctx->style.button.hover,nk_style_item_color(nk_rgba(50,200,255,255)));
+        ctx->style.button.text_normal = nk_rgb(255,255,255);
+        ctx->style.button.rounding = 12.0f;
+        
+        { struct nk_user_font fn=nk_elseaos_create_font_bold(18.0f);
+          nk_style_push_font(ctx,&fn);
+          
+          /* Native rounded glow effect */
+          float old_border = ctx->style.button.border;
+          ctx->style.button.border = 3.0f;
+          nk_style_push_color(ctx, &ctx->style.button.border_color, nk_rgba(0, 255, 255, 180));
+          
+          if (nk_button_label(ctx,"Next ->")) {
+              current_step = 3; // Jump directly to Time Zone, skipping old lang/kbd
+          }
+          
+          nk_style_pop_color(ctx);
+          ctx->style.button.border = old_border;
+          nk_style_pop_font(ctx); }
+          
+        nk_style_pop_style_item(ctx);
+        nk_style_pop_style_item(ctx);
+        nk_label(ctx,"",NK_TEXT_LEFT);
+
+        nk_end(ctx);
+        nk_elseaos_render();
+        return;
+    }
 
     /* ── Title bar ── */
     nk_layout_row_template_begin(ctx,40);
@@ -237,50 +953,70 @@ void installer_render_frame(void) {
     ctx->style.scrollv.border=0.0f; ctx->style.scrollv.rounding=3.0f;
 
     {
-        struct nk_user_font fsb=nk_elseaos_create_font(13.5f);
+        struct nk_user_font fsb=nk_elseaos_create_font(13.0f);
         nk_style_push_font(ctx,&fsb);
         if (nk_group_begin(ctx,"Sidebar",0)) {
-            nk_layout_row_dynamic(ctx,8,1); nk_spacing(ctx,1);
+            nk_layout_row_dynamic(ctx,6,1); nk_spacing(ctx,1);
             ctx->style.button.rounding=0.0f; ctx->style.button.border=0.0f;
             ctx->style.button.text_alignment=NK_TEXT_LEFT;
-            ctx->style.button.padding=nk_vec2(22,4);
-            nk_layout_row_dynamic(ctx,32,1);
+            ctx->style.button.padding=nk_vec2(36,4);
+            nk_layout_row_dynamic(ctx,30,1);
             for (int i=0;i<NUM_STEPS;i++) {
                 struct nk_rect b=nk_widget_bounds(ctx);
                 struct nk_command_buffer* cv=nk_window_get_canvas(ctx);
+                /* Extract accent color for this step */
+                uint32_t sc=SCLR[i];
+                uint8_t sr=(uint8_t)((sc>>16)&0xFF);
+                uint8_t sg=(uint8_t)((sc>>8)&0xFF);
+                uint8_t sb2=(uint8_t)(sc&0xFF);
+
                 if (i==current_step) {
                     nk_style_push_style_item(ctx,&ctx->style.button.normal,
-                        nk_style_item_color(nk_rgba(18,68,172,255)));
+                        nk_style_item_color(nk_rgba(sr/8+8,sg/8+8,sb2/8+16,255)));
                     nk_style_push_style_item(ctx,&ctx->style.button.hover,
-                        nk_style_item_color(nk_rgba(22,80,195,255)));
+                        nk_style_item_color(nk_rgba(sr/6+10,sg/6+10,sb2/6+20,255)));
                     ctx->style.button.text_normal=nk_rgb(255,255,255);
                     nk_button_label(ctx,SNAME[i]);
                     nk_style_pop_style_item(ctx); nk_style_pop_style_item(ctx);
-                    nk_fill_rect(cv,nk_rect(b.x,b.y+2,3,b.h-4),1.5f,nk_rgb(38,198,255));
-                    nk_fill_rect(cv,nk_rect(b.x+8,b.y+(b.h-8)/2,8,8),2.0f,nk_rgb(38,198,255));
+                    /* Left accent bar */
+                    nk_fill_rect(cv,nk_rect(b.x,b.y+3,3,b.h-6),1.5f,nk_rgb(sr,sg,sb2));
+                    /* Colored icon badge */
+                    nk_fill_rect(cv,nk_rect(b.x+6,b.y+5,20,20),4.0f,nk_rgb(sr,sg,sb2));
+                    { struct nk_user_font fi=nk_elseaos_create_font(11.0f);
+                      struct nk_rect ir=nk_rect(b.x+6,b.y+5,20,20);
+                      int il=0; while(SICON[i][il]) il++;
+                      nk_draw_text(cv,ir,SICON[i],il,ctx->style.font,nk_rgb(0,0,0),nk_rgb(255,255,255)); }
                 } else if (i<current_step) {
                     nk_style_push_style_item(ctx,&ctx->style.button.normal,
-                        nk_style_item_color(nk_rgba(11,15,23,255)));
+                        nk_style_item_color(nk_rgba(9,12,20,255)));
                     nk_style_push_style_item(ctx,&ctx->style.button.hover,
-                        nk_style_item_color(nk_rgba(17,23,36,255)));
-                    ctx->style.button.text_normal=nk_rgb(62,188,92);
+                        nk_style_item_color(nk_rgba(13,18,28,255)));
+                    ctx->style.button.text_normal=nk_rgb(80,195,100);
                     if (nk_button_label(ctx,SNAME[i])) current_step=i;
                     nk_style_pop_style_item(ctx); nk_style_pop_style_item(ctx);
-                    nk_fill_rect(cv,nk_rect(b.x+7,b.y+(b.h-8)/2,8,8),2.0f,nk_rgb(48,196,78));
+                    /* Green check badge for completed */
+                    nk_fill_rect(cv,nk_rect(b.x+6,b.y+5,20,20),4.0f,nk_rgb(30,160,60));
+                    { struct nk_user_font fi=nk_elseaos_create_font(11.0f);
+                      struct nk_rect ir=nk_rect(b.x+6,b.y+5,20,20);
+                      nk_draw_text(cv,ir,"v",1,ctx->style.font,nk_rgb(0,0,0),nk_rgb(200,255,200)); }
                 } else {
                     nk_style_push_style_item(ctx,&ctx->style.button.normal,
-                        nk_style_item_color(nk_rgba(9,11,18,255)));
+                        nk_style_item_color(nk_rgba(8,10,16,255)));
                     nk_style_push_style_item(ctx,&ctx->style.button.hover,
                         nk_style_item_color(nk_rgba(11,14,22,255)));
-                    ctx->style.button.text_normal=nk_rgb(82,88,112);
+                    ctx->style.button.text_normal=nk_rgb(62,68,92);
                     nk_button_label(ctx,SNAME[i]);
                     nk_style_pop_style_item(ctx); nk_style_pop_style_item(ctx);
-                    nk_fill_rect(cv,nk_rect(b.x+8,b.y+(b.h-6)/2,6,6),1.5f,nk_rgb(38,44,66));
+                    /* Dim icon badge for future steps */
+                    nk_fill_rect(cv,nk_rect(b.x+6,b.y+5,20,20),4.0f,nk_rgba(sr/5,sg/5,sb2/5,255));
+                    { struct nk_rect ir=nk_rect(b.x+6,b.y+5,20,20);
+                      int il=0; while(SICON[i][il]) il++;
+                      nk_draw_text(cv,ir,SICON[i],il,ctx->style.font,nk_rgba(0,0,0,0),nk_rgba(sr/2,sg/2,sb2/2,255)); }
                 }
             }
-            nk_layout_row_dynamic(ctx,16,1); nk_spacing(ctx,1);
-            nk_layout_row_dynamic(ctx,18,1);
-            nk_label_colored(ctx,"v1.0 Nebula",NK_TEXT_CENTERED,nk_rgb(50,56,78));
+            nk_layout_row_dynamic(ctx,10,1); nk_spacing(ctx,1);
+            nk_layout_row_dynamic(ctx,16,1);
+            nk_label_colored(ctx,"ElseaOS v1.0.4",NK_TEXT_CENTERED,nk_rgb(38,44,66));
             nk_group_end(ctx);
         }
         nk_style_pop_font(ctx);
@@ -2009,6 +2745,30 @@ void installer_render_frame(void) {
                   }
                   nk_group_end(ctx);
               }
+
+              /* Flying Phoenix Animation */
+              {
+                  static float px = 0.0f, py = 0.0f;
+                  static float vx = 4.0f, vy = 3.0f;
+                  static int frame_idx = 0, frame_delay = 0;
+                  frame_delay++;
+                  if (frame_delay >= 2) {
+                      frame_idx = (frame_idx + 1) % 100;
+                      frame_delay = 0;
+                  }
+                  px += vx; py += vy;
+                  float bounds_w = (float)(win_w - 188 - 160);
+                  float bounds_h = (float)(main_h - 160);
+                  if (px < 0.0f) { px = 0.0f; vx = -vx; }
+                  if (px > bounds_w) { px = bounds_w; vx = -vx; }
+                  if (py < 0.0f) { py = 0.0f; vy = -vy; }
+                  if (py > bounds_h) { py = bounds_h; vy = -vy; }
+                  struct nk_command_buffer* cv = nk_window_get_canvas(ctx);
+                  struct nk_rect ir = nk_rect(win_x + 188 + px, win_y + 65 + py, 160, 160);
+                  struct nk_image img = nk_image_id(10000 + frame_idx);
+                  nk_draw_image(cv, ir, &img, nk_rgb(255,255,255));
+              }
+
               nk_style_pop_font(ctx); }
 
         /* ════ STEP 19 – FIRST BOOT ════ */
@@ -2122,7 +2882,10 @@ void installer_render_frame(void) {
                 nk_style_item_color(nk_rgba(22,28,44,255)));
             ctx->style.button.text_normal=nk_rgb(188,195,218);
             ctx->style.button.border=1.0f; ctx->style.button.border_color=nk_rgb(50,58,95);
-            if(nk_button_label(ctx,"< Back")) current_step--;
+            if(nk_button_label(ctx,"< Back")) {
+                if (current_step == 3) current_step = 0;
+                else current_step--;
+            }
             nk_style_pop_style_item(ctx);
         }
 

@@ -1,6 +1,6 @@
 CC      = gcc -m32
 AS      = gcc -m32
-CFLAGS  = -m32 -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -fno-pie -fno-pic -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
+CFLAGS  = -m32 -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -Ilvgl -fno-pie -fno-pic -fno-stack-protector -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
 LDFLAGS = -m32 -T src/linker.ld -nostdlib -no-pie -Wl,--build-id=none
 
 SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
@@ -28,6 +28,10 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/nostdio.c \
          src/nvg_backend.c \
          src/gl_backend.c \
+         src/lv_font_inter_700_48.c \
+         src/lv_font_inter_400_16.c \
+         src/lv_font_inter_500_16.c \
+         src/lv_font_inter_600_16.c \
          src/freetype.c \
          src/spirv.c \
          src/vk_backend.c \
@@ -56,10 +60,19 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/voice.c \
          src/fde.c \
          src/tpm.c \
-         src/gpu.c
+         src/gpu.c \
+         src/bsplash.c \
+         src/gif_splash.c \
+         src/lv_port_disp.c \
+         src/lv_port_indev.c
+
 SRCS_S = src/boot.S src/gdt_flush.S src/isr.S src/context_switch.S
 
-OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o)
+LVGL_DIR = lvgl
+LVGL_SRCS = $(shell find $(LVGL_DIR)/src -name \*.c)
+LVGL_OBJS = $(LVGL_SRCS:.c=.o)
+
+OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o) $(LVGL_OBJS)
 
 all: elsea.iso
 
@@ -139,13 +152,16 @@ elsea.iso: elsea.bin disk.img hello.elf initrd/c4.elf initrd/test_pipe.elf initr
 	mkdir -p isodir/boot/grub
 	cp elsea.bin isodir/boot/elsea.bin
 	cp grub/grub.cfg isodir/boot/grub/grub.cfg
-	cd initrd && tar -cvf ../isodir/boot/initrd.tar .
+	cd initrd && tar -cvf ../isodir/boot/initrd.tar \
+	    --exclude='bsplash_*.bin' \
+	    --exclude='gif_splash.bin' \
+	    .
 	grub-mkrescue -o elsea.iso isodir \
 	    --modules="normal part_gpt part_msdos fat iso9660 multiboot2 search" 2>&1
 	truncate -s 2G elsea.iso
 
 run: elsea.iso disk.img ext2_disk.img nvme_disk.img
-	qemu-system-i386 -cdrom elsea.iso \
+	qemu-system-i386 -m 2048M -cdrom elsea.iso \
 	    -drive file=disk.img,format=raw,index=0,media=disk \
 	    -drive file=ext2_disk.img,format=raw,if=none,id=ahcidisk -device ahci,id=ahci -device ide-hd,drive=ahcidisk,bus=ahci.0 \
 	    -drive file=nvme_disk.img,format=raw,if=none,id=nvmedisk -device nvme,serial=deadbeef,drive=nvmedisk \
@@ -154,7 +170,9 @@ run: elsea.iso disk.img ext2_disk.img nvme_disk.img
 	    -usb -device usb-tablet \
 	    -serial stdio \
 	    -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
-	    -boot d -smp 4
+	    -boot d -smp 4 \
+	    -vga std
+
 
 run-uefi: elsea.iso disk.img
 	qemu-system-i386 -cdrom elsea.iso \
@@ -174,6 +192,17 @@ debug: elsea.iso disk.img
 	    -boot d -s -S -no-reboot -no-shutdown \
 	    -serial stdio 2>&1 | tee qemu_debug.log &
 	gdb elsea.bin -ex "target remote :1234"
+
+
+# Generate boot splash BMP frames and initrd/bsplash_WxH.bin.
+# Resolution is auto-detected from grub/grub.cfg.
+# Override with: make splash INPUT_VIDEO=myvideo.mp4 FPS=12 RES=1920x1080
+INPUT_VIDEO ?= in_this_video_remove_apple_ima.mp4
+FPS         ?= 15
+RES         ?= auto
+
+splash:
+	python3 make_bmp_splash.py $(INPUT_VIDEO) $(FPS) $(RES)
 
 clean:
 	rm -f src/*.o elsea.bin elsea.iso

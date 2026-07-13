@@ -58,6 +58,7 @@ int wm_handle_shortcut(char key);
 
 void wm_init(void);
 void wm_request_redraw(void);
+void wm_draw_installer_window_bg(int x, int y, int w, int h);
 window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const char* title);
 void wm_draw_string_window(window_t* win, uint32_t x, uint32_t y, const char* str, uint32_t fg);
 void wm_draw_string_window_scaled(window_t* win, uint32_t x, uint32_t y, const char* str, uint32_t fg, int scale);

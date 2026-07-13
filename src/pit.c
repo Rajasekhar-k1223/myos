@@ -17,6 +17,10 @@ static void pit_callback(struct registers* r) {
     (void)r;
     if (apic_get_id() == bsp_apic_id) {
         pit_ticks++;
+
+        extern void lv_tick_inc(uint32_t tick_period);
+        lv_tick_inc(10); // 100Hz = 10ms per tick
+
         if (!sched_active) return;
         task_tick(); /* decrement sleep counters */
     }

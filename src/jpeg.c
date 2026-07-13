@@ -6,10 +6,12 @@
 /* Freestanding-kernel port of stb_image, JPEG decoder only (mirrors the
  * STBTT_* macro override pattern already used for stb_truetype in ttf.c). */
 #define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_JPEG
+
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
+#define STBI_NO_HDR
 #define STBI_NO_FAILURE_STRINGS
+#define STBI_NO_THREAD_LOCALS
 #define STBI_ASSERT(x) ((void)0)
 #define STBI_MALLOC(sz)       kmalloc(sz)
 #define STBI_FREE(p)          kfree(p)
