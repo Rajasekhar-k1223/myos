@@ -327,7 +327,8 @@ void installer_lvgl_init(void) {
     lv_obj_align(sub, 2 /* LV_ALIGN_TOP_MID */, 0, 105);
 
     // Phoenix Logo
-    bmp_load_to_buffer("phoenix.bmp", phoenix_buf, 180, 180, 0, 0);
+    extern void bmp_load_to_buffer_scaled(const char*, uint32_t*, int, int, int, int, int, int);
+    bmp_load_to_buffer_scaled("phoenix-hd.bmp", phoenix_buf, 180, 180, 0, 0, 180, 180);
     for(int i = 0; i < 180 * 180; i++) {
         if((phoenix_buf[i] & 0xFFFFFF) != 0) {
             phoenix_buf[i] |= 0xFF000000;
