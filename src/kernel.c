@@ -786,65 +786,23 @@ void kernel_main(uint32_t magic, uint32_t mb2_addr) {
             }
         }
     }
+    extern void lv_desktop_init(void);
+    lv_desktop_init();
 
-    vesa_clear(0x0B0E14);   /* fill with installer background colour */
-
-    extern void wm_set_wallpaper(const char*);
-    wm_set_wallpaper("elsea_bg.bmp");
-
-    extern void wm_blur_desktop_bg(int);
-    wm_blur_desktop_bg(15);
-
-    // Run the graphical OS installer
-    extern void installer_run(void);
-    installer_run();
-
-    extern int nk_installer_running;
-
-    shell_init();
-    int desktop_apps_started = 0;
-
+    // ── OS Entry Point ──
+    extern void installer_lvgl_init(void);
+    installer_lvgl_init();
+    
     for (;;) {
-        extern int nk_installer_running;
+        extern void lv_timer_handler(void);
+        lv_timer_handler();
 
-        if (nk_installer_running) {
-            /* Clear screen by drawing desktop & dock */
-            extern void wm_render(void);
-            wm_render();
+        extern void vesa_swap_buffers(void);
+        vesa_swap_buffers();
 
-            /* Installer: spin freely — no hlt so mouse/clicks are immediate */
-            extern void installer_render_frame(void);
-            installer_render_frame();
+        extern void uhci_poll(void);
+        uhci_poll();
 
-            extern void lv_timer_handler(void);
-            lv_timer_handler();
-
-            extern void wm_draw_mouse(void);
-            wm_draw_mouse();
-
-            extern void vesa_swap_buffers(void);
-            vesa_swap_buffers();
-        } else {
-            if (!desktop_apps_started) {
-                extern void wm_set_wallpaper(const char*);
-                wm_set_wallpaper("phoenix-hd.bmp");
-                terminal_quiet = 0;
-                desktop_apps_started = 1;
-            }
-
-            extern void wm_process_events(void);
-            wm_process_events();
-
-            /* Voice keepalive and USB poll only needed in desktop mode */
-            { extern void voice_process_audio(const short*, int);
-              static short _silence[512];
-              voice_process_audio(_silence, 512); }
-
-            extern void uhci_poll(void);
-            uhci_poll();
-
-            /* Desktop can yield to interrupts — no tight spin needed */
-            __asm__ volatile("hlt");
-        }
+        __asm__ volatile("hlt");
     }
 }

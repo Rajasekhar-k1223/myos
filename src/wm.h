@@ -6,6 +6,8 @@ typedef struct {
     uint32_t w, h;
     char title[64];
     uint32_t* buffer;
+    void* lv_win;
+    void* lv_canvas;
     int active;
     uint32_t cursor_x, cursor_y;
     uint32_t bg_color;

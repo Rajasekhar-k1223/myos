@@ -93,6 +93,11 @@ void kfree(void* ptr) {
 void* krealloc(void* ptr, size_t newsize) {
     if (!ptr) return kmalloc(newsize);
     if (!newsize) { kfree(ptr); return NULL; }
+    if ((uint32_t)ptr == 0xF000FF53) {
+        extern void terminal_printf(const char*, ...);
+        terminal_printf("FATAL: krealloc got 0xF000FF53 from %x\n", __builtin_return_address(0));
+        while(1);
+    }
 
     header_t* b = (header_t*)ptr - 1;
     newsize = ALIGN8(newsize);

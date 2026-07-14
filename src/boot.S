@@ -34,7 +34,7 @@ mb2_header_end:
 .section .bss
 .align 16
 stack_bottom:
-.skip 16384           /* 16 KiB kernel stack */
+.skip 65536           /* 16 KiB kernel stack */
 stack_top:
 
 /* ── Kernel entry point ─────────────────────────────────────────────────────

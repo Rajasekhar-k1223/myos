@@ -195,24 +195,17 @@ static void next_btn_event_cb(void* e) {
 
 static uint32_t phoenix_buf[180 * 180];
 
+extern void installer_render_frame(void);
+void installer_timer_cb(void* t) {
+    (void)t;
+    installer_render_frame();
+}
+
 void installer_lvgl_init(void) {
     static int lvgl_inited = 0;
     if (lvgl_inited) return;
     lvgl_inited = 1;
 
-    extern void lv_init(void);
-    extern void lv_port_disp_init(void);
-    extern void lv_port_indev_init(void);
-    extern void lv_obj_set_style_border_opa(void*, int, int);
-    extern void lv_obj_set_style_bg_grad_color(void*, uint32_t, int);
-    extern void lv_obj_set_style_bg_grad_dir(void*, int, int);
-    extern void lv_group_add_obj(void*, void*);
-
-    lv_init();
-    lv_port_disp_init();
-    lv_port_indev_init();
-
-    // ── Keyboard Group Setup ────────────────────────────────────────────────
     extern void* lv_group_create(void);
     extern void lv_group_set_default(void*);
     extern void lv_indev_set_group(void*, void*);
@@ -252,18 +245,11 @@ void installer_lvgl_init(void) {
     lv_obj_set_style_pad_left(win,   0, 0);
     lv_obj_set_style_pad_right(win,  0, 0);
 
-    extern void bmp_load_to_buffer_scaled(const char*, uint32_t*, int, int, int, int, int, int);
-    
-    // Window Background (Cosmic Image)
-    static uint32_t win_bg_buf[700 * 500];
-    bmp_load_to_buffer_scaled("welcome_body_bg.bmp", win_bg_buf, 700, 500, 0, 0, 700, 500);
-    for(int i = 0; i < 700 * 500; i++) {
-        win_bg_buf[i] |= 0xFF000000; // Force opaque
-    }
-    void* win_bg_canvas = lv_canvas_create(win);
-    lv_canvas_set_buffer(win_bg_canvas, win_bg_buf, 700, 500, 5 /* LV_IMG_CF_TRUE_COLOR_ALPHA */);
-    lv_obj_align(win_bg_canvas, 9 /* LV_ALIGN_CENTER */, 0, 0);
+    extern void* lv_timer_create(void (*)(void*), uint32_t, void*);
+    extern void installer_timer_cb(void*);
+    lv_timer_create(installer_timer_cb, 1000, NULL);
 
+    // Removed internal background image to allow full-screen blurred elsea_bg.bmp to show through
     // Dark overlay for legibility (dimming the bright background)
     void* overlay = lv_obj_create(win);
     lv_obj_set_size(overlay, 700, 500);
@@ -328,18 +314,29 @@ void installer_lvgl_init(void) {
 
     // Phoenix Logo
     extern void bmp_load_to_buffer_scaled(const char*, uint32_t*, int, int, int, int, int, int);
+    static uint32_t phoenix_buf[180 * 180];
     bmp_load_to_buffer_scaled("phoenix-hd.bmp", phoenix_buf, 180, 180, 0, 0, 180, 180);
     for(int i = 0; i < 180 * 180; i++) {
-        if((phoenix_buf[i] & 0xFFFFFF) != 0) {
-            phoenix_buf[i] |= 0xFF000000;
-        } else {
-            phoenix_buf[i] = 0x00000000;
+        uint32_t c = phoenix_buf[i];
+        uint8_t r = (c >> 16) & 0xFF;
+        uint8_t g = (c >> 8) & 0xFF;
+        uint8_t b = c & 0xFF;
+        uint8_t a = (r > g) ? r : g;
+        if (b > a) a = b;
+        
+        // Boost alpha slightly to keep it vibrant, but leave black as transparent
+        if (a > 0) {
+            int new_a = a + 50;
+            if (new_a > 255) new_a = 255;
+            a = (uint8_t)new_a;
         }
+        
+        phoenix_buf[i] = (a << 24) | (c & 0xFFFFFF);
     }
     void* logo_canvas = lv_canvas_create(win);
     lv_canvas_set_buffer(logo_canvas, phoenix_buf, 180, 180, 5 /* LV_IMG_CF_TRUE_COLOR_ALPHA */);
     lv_obj_align(logo_canvas, 9 /* LV_ALIGN_CENTER */, 0, -40);
-    
+
     void* version = lv_label_create(win);
     lv_label_set_text(version, "version 1.0.4 - 'Aurora'");
     lv_obj_set_style_text_color(version, 0xFFAAAAAA, 0);
@@ -408,6 +405,7 @@ void installer_lvgl_init(void) {
     lv_obj_set_style_bg_opa(lang_list, 200, 0x040000 | 0x0001);
     lv_obj_set_style_bg_color(lang_list, 0xFF224488, 0x040000 | 0x0020); // LV_PART_SELECTED | LV_STATE_PRESSED
     lv_obj_set_style_bg_opa(lang_list, 150, 0x040000 | 0x0020);
+    lv_obj_set_style_text_color(lang_list, 0xFFFFFFFF, 0x040000); // LV_PART_SELECTED
 
     // Keyboard Dropdown
     void* kbd_dd = lv_dropdown_create(win);
@@ -438,6 +436,7 @@ void installer_lvgl_init(void) {
     lv_obj_set_style_text_color(kbd_list, 0xFFFFFFFF, 0);
     lv_obj_set_style_text_font(kbd_list, &lv_font_inter_500_16, 0);
     lv_obj_set_style_border_color(kbd_list, 0xFF00A8FF, 0);
+    lv_obj_set_style_text_color(kbd_list, 0xFFFFFFFF, 0x040000); // LV_PART_SELECTED
 
     lv_obj_set_style_bg_color(kbd_list, 0xFF00A8FF, 0x040000 | 0x0001);
     lv_obj_set_style_bg_opa(kbd_list, 200, 0x040000 | 0x0001);
@@ -545,7 +544,15 @@ void installer_lvgl_init(void) {
     // Attach click handler to move to the next screen!
     extern void lv_obj_add_event_cb(void*, void*, int, void*);
     lv_obj_add_event_cb(next_btn, next_btn_event_cb, 2 /* LV_EVENT_CLICKED */, (void*)0);
-    lv_group_add_obj(group, next_btn);
+    
+    // Add interactive objects to the default input group for keyboard navigation
+    extern void* lv_group_get_default(void);
+    void* def_group = lv_group_get_default();
+    if (def_group) {
+        lv_group_add_obj(def_group, lang_dd);
+        lv_group_add_obj(def_group, kbd_dd);
+        lv_group_add_obj(def_group, next_btn);
+    }
 }
 
 void installer_run(void) {
@@ -607,7 +614,7 @@ void installer_render_frame(void) {
             *p++ = ':';
             *p++ = '0' + t.second / 10; *p++ = '0' + t.second % 10; // SECONDS
             *p++ = ' ';
-            *p++ = ampm[0]; *p++ = ampm[1]; *p++ = 'M';
+            *p++ = ampm[0]; *p++ = ampm[1];
             *p++ = ' '; *p++ = '|'; *p++ = ' ';
             *p++ = days[wd][0]; *p++ = days[wd][1]; *p++ = days[wd][2];
             *p++ = ','; *p++ = ' ';

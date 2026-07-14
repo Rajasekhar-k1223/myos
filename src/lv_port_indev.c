@@ -82,8 +82,8 @@ static void keypad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
         else if (c == '\t') lk = 9; // LV_KEY_NEXT
         else if (c == 27) lk = 27; // LV_KEY_ESC
         else if (c == '\x10') lk = 17; // LV_KEY_UP
-        else if (c == '\x11') lk = 20; // LV_KEY_DOWN
-        else if (c == '\x12') lk = 18; // LV_KEY_LEFT
+        else if (c == '\x11') lk = 18; // LV_KEY_DOWN
+        else if (c == '\x12') lk = 20; // LV_KEY_LEFT
         else if (c == '\x13') lk = 19; // LV_KEY_RIGHT
         
         last_key = lk;

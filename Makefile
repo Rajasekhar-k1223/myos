@@ -1,6 +1,6 @@
 CC      = gcc -m32
 AS      = gcc -m32
-CFLAGS  = -m32 -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isrc -Ilvgl -fno-pie -fno-pic -fno-stack-protector -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
+CFLAGS  = -m32 -std=gnu99 -ffreestanding -O0 -g -Wall -Wextra -Isrc -Ilvgl -fno-pie -fno-pic -fno-stack-protector -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
 LDFLAGS = -m32 -T src/linker.ld -nostdlib -no-pie -Wl,--build-id=none
 
 SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
@@ -28,6 +28,7 @@ SRCS_C = src/kernel.c src/gdt.c src/idt.c src/keyboard.c \
          src/nostdio.c \
          src/nvg_backend.c \
          src/gl_backend.c \
+         src/lv_desktop.c \
          src/lv_font_inter_700_48.c \
          src/lv_font_inter_400_16.c \
          src/lv_font_inter_500_16.c \

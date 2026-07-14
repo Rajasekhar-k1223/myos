@@ -21,6 +21,7 @@
 #include "ttf.h"
 #include "nvg_backend.h"
 #include "nk_backend.h"
+#include "lvgl.h"
 #include "widget.h"
 #include "minesweeper.h"
 #include "settings.h"
@@ -41,9 +42,9 @@
 
 #define MAX_WINDOWS 10
 
-static window_t windows[MAX_WINDOWS];
-static int num_windows = 0;
-static int redraw_needed = 1;
+window_t windows[MAX_WINDOWS];
+int num_windows = 0;
+int redraw_needed = 1;
 
 typedef struct {
     char name[64];
@@ -544,8 +545,24 @@ window_t* wm_create_window(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const
     
     // Fill window with background color
     for (uint32_t i = 0; i < w * h; i++) {
-        win->buffer[i] = win->bg_color; 
+        win->buffer[i] = win->bg_color | 0xFF000000; 
     }
+    
+    // Create LVGL Window wrapper
+    win->lv_win = lv_win_create(lv_scr_act(), 30);
+    lv_win_add_title(win->lv_win, title);
+    lv_obj_set_size(win->lv_win, w, h + 30);
+    lv_obj_set_pos(win->lv_win, x, y);
+    
+    // Add close button
+    lv_obj_t* close_btn = lv_win_add_btn(win->lv_win, LV_SYMBOL_CLOSE, 40);
+    // TODO: close callback
+    
+    lv_obj_t* content = lv_win_get_content(win->lv_win);
+    lv_obj_set_style_pad_all(content, 0, 0); // No padding inside window
+    win->lv_canvas = lv_canvas_create(content);
+    lv_canvas_set_buffer(win->lv_canvas, win->buffer, w, h, LV_IMG_CF_TRUE_COLOR_ALPHA);
+
     redraw_needed = 1;
     return win;
 }

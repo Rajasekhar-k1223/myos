@@ -66,19 +66,7 @@ void keyboard_handler_inject(char c) {
     if (!c) return;
     keyboard_push_char(c); /* always feed polled buffer */
     extern int snake_handle_input(char c);
-    extern int wm_handle_keypress(char c);
-    extern int wm_handle_shortcut(char c);
-    
-    if (ctrl_held) {
-        wm_handle_shortcut(c);
-    } else {
-        if (!snake_handle_input(c)) {
-            if (!wm_handle_keypress(c)) {
-                extern void shell_handle_keypress(char c);
-                shell_handle_keypress(c);
-            }
-        }
-    }
+    snake_handle_input(c);
 }
 
 static void keyboard_callback(struct registers* regs) {
@@ -129,46 +117,30 @@ static void keyboard_callback(struct registers* regs) {
 
     if (sc == 0x49) { // Page Up
         current_lvgl_key = 17;
-        extern int wm_handle_shortcut(char c);
-        wm_handle_shortcut(17);
         return;
     }
     if (sc == 0x51) { // Page Down
         current_lvgl_key = 18;
-        extern int wm_handle_shortcut(char c);
-        wm_handle_shortcut(18);
         return;
     }
     if (sc == 0x48) { // Up arrow (\x10)
         keyboard_push_char('\x10');
         current_lvgl_key = 17; // LV_KEY_UP
-        extern int wm_handle_keypress(char c);
-        extern void shell_handle_keypress(char c);
-        if (!wm_handle_keypress('\x10')) shell_handle_keypress('\x10');
         return;
     }
     if (sc == 0x50) { // Down arrow (\x11)
         keyboard_push_char('\x11');
-        current_lvgl_key = 20; // LV_KEY_DOWN
-        extern int wm_handle_keypress(char c);
-        extern void shell_handle_keypress(char c);
-        if (!wm_handle_keypress('\x11')) shell_handle_keypress('\x11');
+        current_lvgl_key = 18; // LV_KEY_DOWN
         return;
     }
     if (sc == 0x4B) { // Left arrow (\x12)
         keyboard_push_char('\x12');
-        current_lvgl_key = 18; // LV_KEY_LEFT
-        extern int wm_handle_keypress(char c);
-        extern void shell_handle_keypress(char c);
-        if (!wm_handle_keypress('\x12')) shell_handle_keypress('\x12');
+        current_lvgl_key = 20; // LV_KEY_LEFT
         return;
     }
     if (sc == 0x4D) { // Right arrow (\x13)
         keyboard_push_char('\x13');
         current_lvgl_key = 19; // LV_KEY_RIGHT
-        extern int wm_handle_keypress(char c);
-        extern void shell_handle_keypress(char c);
-        if (!wm_handle_keypress('\x13')) shell_handle_keypress('\x13');
         return;
     }
 
