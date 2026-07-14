@@ -75,7 +75,14 @@ LVGL_OBJS = $(LVGL_SRCS:.c=.o)
 
 OBJS = $(SRCS_C:.c=.o) $(SRCS_S:.S=.o) $(LVGL_OBJS)
 
-all: elsea.iso
+lvgl_patch:
+	@if [ ! -f lvgl/.patched ] && [ -f patches/lvgl_dropdown_fix.patch ]; then \
+		echo "Applying LVGL patches..."; \
+		cd lvgl && git apply ../patches/lvgl_dropdown_fix.patch; \
+		touch .patched; \
+	fi
+
+all: lvgl_patch elsea.iso
 
 src/trampoline.h: src/trampoline.asm
 	nasm -f bin src/trampoline.asm -o src/trampoline.bin
