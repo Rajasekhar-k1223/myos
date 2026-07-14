@@ -1,0 +1,33 @@
+diff --git a/src/widgets/lv_dropdown.c b/src/widgets/lv_dropdown.c
+index aa51816..cc70a71 100644
+--- a/src/widgets/lv_dropdown.c
++++ b/src/widgets/lv_dropdown.c
+@@ -906,6 +906,20 @@ static void draw_list(lv_event_t * e)
+     if(has_common) {
+         const lv_area_t * clip_area_ori = draw_ctx->clip_area;
+         draw_ctx->clip_area = &clip_area_core;
++        
++        uint16_t orig_pr = dropdown->pr_opt_id;
++        extern int32_t mouse_get_x(void);
++        extern int32_t mouse_get_y(void);
++        int32_t mx = mouse_get_x();
++        int32_t my = mouse_get_y();
++        if (mx >= dropdown->list->coords.x1 && mx <= dropdown->list->coords.x2 &&
++            my >= dropdown->list->coords.y1 && my <= dropdown->list->coords.y2) {
++            uint16_t hover_id = get_id_on_point(dropdown_obj, my);
++            if(hover_id != LV_DROPDOWN_PR_NONE) {
++                dropdown->pr_opt_id = hover_id;
++            }
++        }
++
+         if(dropdown->selected_highlight) {
+             if(dropdown->pr_opt_id == dropdown->sel_opt_id) {
+                 draw_box(dropdown_obj, draw_ctx, dropdown->pr_opt_id, LV_STATE_CHECKED | LV_STATE_PRESSED);
+@@ -922,6 +936,7 @@ static void draw_list(lv_event_t * e)
+             draw_box(dropdown_obj, draw_ctx, dropdown->pr_opt_id, LV_STATE_PRESSED);
+             draw_box_label(dropdown_obj, draw_ctx, dropdown->pr_opt_id, LV_STATE_PRESSED);
+         }
++        dropdown->pr_opt_id = orig_pr;
+         draw_ctx->clip_area = clip_area_ori;
+     }
+ }
